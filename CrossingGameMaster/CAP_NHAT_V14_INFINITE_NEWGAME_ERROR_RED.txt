@@ -1,0 +1,12 @@
+CAP NHAT V14
+
+1. NEW INFINITE GAME
+- Score luon = 0.
+- Difficulty luon = 1 (difficultyTier = 0).
+- Level = 1.
+- Player + checkpoint = (615, 610), cung goc voi Classic.
+- Camera = 360.
+- Xoa world snapshot/map/cu lane/generator state truoc khi bootstrap map Infinite moi.
+
+2. NAME / ID WARNING
+- ErrorColor doi thanh dark red RGB(132, 18, 28).

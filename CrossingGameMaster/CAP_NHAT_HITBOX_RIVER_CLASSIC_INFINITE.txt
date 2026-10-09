@@ -1,0 +1,46 @@
+CROSSING GAME - CAP NHAT HITBOX / RIVER / CLASSIC / INFINITE
+=============================================================
+
+1) HITBOX
+- CPEOPLE.cpp: player scale 0.20 -> 0.19; hitbox theo phan than; vien DO.
+- CCAR.cpp / CBIRD.cpp / CWHALE.cpp: can lai hitbox theo vung anh that.
+- CVEHICLE.cpp / CANIMAL.cpp: vien hitbox VANG.
+- F3: bat/tat hien thi hitbox. Ban nay de ON mac dinh de de test.
+
+2) RIVER / DEEP RIVER
+- CWaterLane.h/.cpp: vung nuoc gay chet thu hep con 50px de khong an vao dai dat giua 2 cum song.
+- Chi chet khi hitbox player thuc su cham WATER va khong co LOG support.
+- Khi roi nuoc, player respawn tren log dang hien tren lane river gan nhat.
+- Them safe land mau xanh giua lane river thu 2 va thu 3 cua cac cum river lien tiep.
+
+3) CLASSIC MODE
+- 10 stage.
+- Stage 1-4: khong co river.
+- River bat dau tu Stage 5 tro di (Stage 5 Mixed, Stage 6-7 Water, Stage 8-10 co the mix river).
+- Dieu kien clear: Score >= 1000 * Stage.
+  Stage 1: 1000
+  Stage 2: 2000
+  ...
+  Stage 10: 10000
+- Lane Classic duoc sinh tiep theo camera, khong bi het obstacle truoc khi du diem.
+
+4) INFINITE MODE
+- Lane dau / khu player bat dau dung la safe lane, khong spawn obstacle tren do.
+- Difficulty tang moi 200 diem (+10% speed).
+- River chi co the bat dau spawn sau 1000 diem.
+- River spawn theo cum 3 lane; giua lane 2 va 3 co safe land mau xanh.
+
+FILES CHINH DA SUA
+- main.cpp
+- CPEOPLE.cpp
+- CVEHICLE.cpp
+- CANIMAL.cpp
+- CCAR.cpp
+- CBIRD.cpp
+- CWHALE.cpp
+- CWaterLane.h
+- CWaterLane.cpp
+- LevelConfig.h
+
+Luu y: project van tro SFML 3.1.0 tai C:\\SFML-3.1.0 tren Windows.
+Hay Build -> Rebuild Solution tren may co SFML de test gameplay thuc te.

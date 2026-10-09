@@ -1,0 +1,1907 @@
+#include <SFML/Graphics.hpp>
+#include <SFML/Audio.hpp>
+
+#include <algorithm>
+#include <array>
+#include <chrono>
+#include <cmath>
+#include <cstdlib>
+#include <filesystem>
+#include <functional>
+#include <iostream>
+#include <memory>
+#include <optional>
+#include <random>
+#include <string>
+#include <vector>
+
+#include "CPEOPLE.h"
+#include "CLANE.h"
+#include "CCAR.h"
+#include "CWHALE.h"
+#include "CBIRD.h"
+#include "CVEHICLE.h"
+#include "Menu.h"
+#include "PauseMenu.h"
+#include "CGAME.h"
+#include "CANIMALLANE.h"
+#include "CSAVEGAME.h"
+#include "GameMode.h"
+#include "LevelConfig.h"
+#include "CWaterLane.h"
+#include "CTRAIN.h"
+#include "AssetManager.h"
+#include "SoundManager.h"
+#include "GameLogicWorker.h"
+#include "CTrafficLight.h"
+#include "LeaderboardManager.h"
+
+using namespace std;
+
+namespace
+{
+    constexpr float WINDOW_WIDTH = 1280.f;
+    constexpr float WINDOW_HEIGHT = 720.f;
+    constexpr float PLAYER_START_X = 615.f;
+    constexpr float PLAYER_START_Y = 610.f;
+    constexpr float INITIAL_CAMERA_Y = 360.f;
+
+    // New map rule: one 100 px hazard lane, then one 100 px safe lane.
+    // The art can later be replaced by two repeating textures without changing gameplay.
+    constexpr float LANE_STEP = 100.f;
+    constexpr float HAZARD_REPEAT = 200.f;
+    constexpr float FIRST_HAZARD_Y = PLAYER_START_Y - LANE_STEP;
+    constexpr float LANE_VISUAL_HEIGHT = 92.f; // gameplay/checkpoint band only
+    constexpr float SAFE_LANE_VISUAL_HEIGHT = 104.f;
+    constexpr float HAZARD_LANE_VISUAL_HEIGHT = 96.f;
+
+    constexpr int INFINITE_DIFFICULTY_SCORE_STEP = 200;
+    constexpr int INFINITE_RIVER_START_DIFFICULTY = 10;
+    constexpr int INFINITE_TRAIN_START_DIFFICULTY = 12;
+    constexpr int CLASSIC_LEVEL_SCORE_TARGET = 1000;
+    constexpr float SAFE_LAND_HEIGHT = 100.f;
+    constexpr float INVULNERABLE_SECONDS = 0.85f;
+    constexpr unsigned int CLASSIC_WORLD_SEED_BASE = 0x4C415631u; // "LAV1" - deterministic Classic starts.
+}
+
+int main()
+{
+    std::srand(static_cast<unsigned int>(std::random_device{}()));
+
+    sf::RenderWindow window(
+        sf::VideoMode({ 1280, 720 }),
+        "Crossing Game",
+        sf::Style::Titlebar | sf::Style::Close);
+    window.setFramerateLimit(60);
+    window.setKeyRepeatEnabled(false);
+
+    CGAME state = CGAME::Menu;
+    GameMode gameMode = GameMode::Endless;
+
+    // currentStage is kept for save compatibility and represents CLASSIC LEVEL (1..10).
+    int currentStage = 1;
+    int level = 1;
+    int score = 0;
+    int lives = 3;
+
+    int activeSlot = -1;
+    SaveData currentProfile;
+    int lastAutoSavedScore = -1;
+    int lastAutoSavedStage = -1;
+
+    bool campaignComplete = false;
+    bool showDebugHitboxes = false;
+    int gameOverScore = 0;
+    bool gameOverNewHighScore = false;
+    bool pendingInfiniteResetAfterGameOver = false;
+    // A Classic level is built before the sf::View declaration below.  This flag
+    // lets the main loop reset the REAL camera view as soon as a level is entered.
+    bool classicCameraHardResetRequested = false;
+
+    Menu menu;
+    if (!menu.load())
+        return -1;
+
+    AssetManager& assets = AssetManager::instance();
+    if (!assets.loadCoreAssets())
+    {
+        std::cout << "Khong load duoc core assets!\n";
+        return -1;
+    }
+    const sf::Font& font = assets.font();
+
+    SoundManager& sounds = SoundManager::instance();
+    sounds.load(); // SFX are optional; the game still runs if a wav is missing.
+
+    PauseMenu pauseMenu(font);
+    GameLogicWorker logicWorker;
+
+    sf::Text gameMessage(font);
+    gameMessage.setCharacterSize(30);
+    gameMessage.setFillColor(sf::Color::Yellow);
+    gameMessage.setOutlineColor(sf::Color(18, 48, 80));
+    gameMessage.setOutlineThickness(2.f);
+    gameMessage.setPosition({ 275.f, 20.f });
+
+    sf::Clock messageClock;
+    bool showMessage = false;
+
+    sf::Text levelText(font);
+    levelText.setCharacterSize(23);
+    levelText.setFillColor(sf::Color::White);
+    levelText.setOutlineColor(sf::Color(18, 48, 80));
+    levelText.setOutlineThickness(2.f);
+    levelText.setPosition({ 20.f, 18.f });
+
+    sf::Text notifyText(font);
+    notifyText.setString("GET READY... WAIT FOR OBSTACLES");
+    notifyText.setCharacterSize(34);
+    notifyText.setFillColor(sf::Color(255, 232, 150));
+    notifyText.setOutlineColor(sf::Color(18, 48, 80));
+    notifyText.setOutlineThickness(3.f);
+    auto notifyBounds = notifyText.getLocalBounds();
+    notifyText.setOrigin({
+        notifyBounds.position.x + notifyBounds.size.x / 2.f,
+        notifyBounds.position.y + notifyBounds.size.y / 2.f
+    });
+    notifyText.setPosition({ 640.f, 650.f });
+
+    // TAB cycles through five player skins. The four additional sprite sheets
+    // are pre-normalized to the visible size of player.png, so the same
+    // PLAYER_SCALE/hitbox works consistently for every skin.
+    std::size_t currentSkinIndex = 0;
+    const std::array<std::string, 5> playerSkinNames = {
+        "DEFAULT", "ANGEL", "DEVIL", "SPIRIT CAT", "MOON SPIRIT"
+    };
+    auto currentPlayerTexture = [&]() -> const sf::Texture&
+    {
+        return assets.playerTexture(currentSkinIndex);
+    };
+    const sf::Texture& carTexture = assets.carTexture();
+    const sf::Texture& whaleTexture = assets.whaleTexture();
+    const sf::Texture& birdTexture = assets.birdTexture();
+    const sf::Texture& vineLaneTexture = assets.vineLaneTexture();
+    const sf::Texture& vineLaneAltTexture = assets.vineLaneAltTexture();
+    const sf::Texture& cloudLaneTexture = assets.cloudLaneTexture();
+    const sf::Texture& playingBackgroundTexture = assets.playingBackgroundTexture();
+    const sf::Texture& trainLaneTexture = assets.trainLaneTexture();
+
+    CPEOPLE player({ PLAYER_START_X, PLAYER_START_Y }, currentPlayerTexture());
+
+    sf::Music backgroundMusic;
+    if (!backgroundMusic.openFromFile("backgroundMusic.ogg"))
+        return -1;
+    backgroundMusic.setLooping(true);
+    backgroundMusic.setVolume(100.f);
+    backgroundMusic.play();
+
+    std::vector<CLANE> vehicleLanes;
+    std::vector<CANIMALLANE> animalLanes;
+    std::vector<CWaterLane> waterLanes;
+    std::optional<CTRAIN> trainHazard;
+
+    // Base speeds are used only by Level 10 so its lane speeds can pulse without
+    // multiplying the previous frame's speed repeatedly.
+    std::vector<float> levelVehicleBaseSpeeds;
+    std::vector<float> levelAnimalBaseSpeeds;
+
+    float nextLaneY = 0.f;
+    float maxCameraY = INITIAL_CAMERA_Y;
+    float bestPlayerY = PLAYER_START_Y;
+
+    int difficultyTier = 0;
+    std::vector<float> riverSafeLandYs;
+    std::optional<float> lastSupportedWaterLaneY;
+
+    int endlessRiverLanesRemaining = 0;
+    int endlessRiverLaneIndex = 0;
+    int endlessNormalLanesSinceRiver = 0;
+    int endlessLaneSequenceIndex = 0;
+    bool endlessHasSpawnedRiver = false;
+    float lastEndlessWaterY = 0.f;
+
+    int classicLaneSequenceIndex = 0;
+    int classicConsecutiveWater = 0;
+    float lastClassicWaterY = 0.f;
+
+    sf::Clock stageClock;
+    sf::Clock hitClock;
+    bool invulnerable = false;
+
+    bool playerMovementLocked = true;
+    sf::Clock movementLockClock;
+    constexpr float minimumReadyTime = 0.45f;
+
+    unsigned int currentWorldSeed = std::random_device{}();
+    std::mt19937 rng(currentWorldSeed);
+
+    // A NEW GAME receives a unique seed; the seed is saved so Load Game can
+    // restore/rebuild the same deterministic world if no V6 snapshot is present.
+    auto reseedForNewGame = [&]()
+    {
+        const auto timeSeed = static_cast<unsigned int>(
+            std::chrono::high_resolution_clock::now().time_since_epoch().count());
+        currentWorldSeed = std::random_device{}() ^ timeSeed;
+        rng.seed(currentWorldSeed);
+        std::srand(currentWorldSeed);
+        logicWorker.resetTrafficCycle();
+    };
+
+    auto applySavedSeed = [&](unsigned int seed)
+    {
+        currentWorldSeed = seed == 0 ? 1u : seed;
+        rng.seed(currentWorldSeed);
+        std::srand(currentWorldSeed);
+        logicWorker.resetTrafficCycle();
+    };
+
+    auto applyClassicLevelSeed = [&](int levelNumber)
+    {
+        // Every Classic level has a deterministic initial layout. Re-entering the
+        // same level always rebuilds the same starting obstacle positions while
+        // all levels share Level 1's world-coordinate origin.
+        const unsigned int levelMix = static_cast<unsigned int>(std::clamp(levelNumber, 1, 10)) * 0x9E3779B9u;
+        applySavedSeed(CLASSIC_WORLD_SEED_BASE ^ levelMix);
+    };
+
+    auto randomFloat = [&](float minValue, float maxValue)
+    {
+        std::uniform_real_distribution<float> dist(minValue, maxValue);
+        return dist(rng);
+    };
+
+    auto randomInt = [&](int minValue, int maxValue)
+    {
+        std::uniform_int_distribution<int> dist(minValue, maxValue);
+        return dist(rng);
+    };
+
+    // Fixed repeating map: hazard center 510, 310, 110, ... and safe center
+    // 610, 410, 210, ... .  This completely decouples gameplay from artwork.
+    auto previousHazardLaneY = [](float currentY)
+    {
+        const float diff = FIRST_HAZARD_Y - currentY;
+        const int k = static_cast<int>(std::floor(diff / HAZARD_REPEAT)) + 1;
+        return FIRST_HAZARD_Y - static_cast<float>(k) * HAZARD_REPEAT;
+    };
+
+    auto nearestSafeLaneY = [](float worldY)
+    {
+        const float safeIndex = std::round((PLAYER_START_Y - worldY) / HAZARD_REPEAT);
+        return PLAYER_START_Y - safeIndex * HAZARD_REPEAT;
+    };
+
+    // Used only when leaving Infinite Mode: save the player on the nearest safe
+    // lane BEHIND/below the final position so Load Game never resumes on a hazard.
+    auto safeLaneAtOrBelowY = [](float worldY)
+    {
+        const float progress = (PLAYER_START_Y - worldY) / HAZARD_REPEAT;
+        const int safeIndex = std::max(0, static_cast<int>(std::floor(progress + 0.0001f)));
+        return PLAYER_START_Y - static_cast<float>(safeIndex) * HAZARD_REPEAT;
+    };
+
+    auto safeTextureForY = [&](float worldY) -> const sf::Texture&
+    {
+        const int safeIndex = std::abs(static_cast<int>(
+            std::lround((PLAYER_START_Y - worldY) / HAZARD_REPEAT)));
+        return (safeIndex % 2 == 0) ? vineLaneTexture : vineLaneAltTexture;
+    };
+
+    auto isSafeBandY = [&](float worldY)
+    {
+        return std::abs(worldY - nearestSafeLaneY(worldY)) <= LANE_VISUAL_HEIGHT * 0.5f;
+    };
+
+    auto drawLaneTexture = [&](sf::RenderWindow& target, const sf::Texture& texture,
+                               float centerY, float height)
+    {
+        const auto size = texture.getSize();
+        if (size.x == 0 || size.y == 0)
+            return;
+
+        // Keep the PNG aspect ratio so pixel-art is not stretched across 1280 px.
+        // Tiles alternate NORMAL / MIRRORED. Therefore each seam joins the same
+        // source edge (right-right, then left-left), which hides colour/shape jumps
+        // much better than repeating every tile in the same direction.
+        const float scale = height / static_cast<float>(size.y);
+        const float tileWidth = static_cast<float>(size.x) * scale;
+        if (tileWidth <= 1.f)
+            return;
+
+        constexpr float overlap = 5.f;
+        const float step = std::max(1.f, tileWidth - overlap);
+        int tileIndex = 0;
+
+        // Start slightly off-screen so the first/last crop is less conspicuous.
+        for (float x = -tileWidth * 0.18f; x < WINDOW_WIDTH + tileWidth; x += step, ++tileIndex)
+        {
+            sf::Sprite lane(texture);
+            const bool mirrored = (tileIndex % 2) == 1;
+
+            if (!mirrored)
+            {
+                lane.setPosition({ x, centerY - height / 2.f });
+                lane.setScale({ scale, scale });
+            }
+            else
+            {
+                // Negative X scale mirrors the tile. Shift by tileWidth so its
+                // visible rectangle still occupies [x, x + tileWidth].
+                lane.setPosition({ x + tileWidth, centerY - height / 2.f });
+                lane.setScale({ -scale, scale });
+            }
+
+            target.draw(lane);
+        }
+    };
+
+    auto drawPlayingBackground = [&](sf::RenderWindow& target, const sf::View& camera)
+    {
+        const auto size = playingBackgroundTexture.getSize();
+        if (size.x == 0 || size.y == 0)
+            return;
+
+        // Cover the 1280x720 viewport with one static sky image while the world
+        // scrolls through it. Uniform scale avoids stretching the gradient.
+        const float scale = std::max(
+            WINDOW_WIDTH / static_cast<float>(size.x),
+            WINDOW_HEIGHT / static_cast<float>(size.y));
+        const float visualWidth = static_cast<float>(size.x) * scale;
+        const float visualHeight = static_cast<float>(size.y) * scale;
+        const float cameraTop = camera.getCenter().y - WINDOW_HEIGHT / 2.f;
+
+        sf::Sprite background(playingBackgroundTexture);
+        background.setPosition({
+            (WINDOW_WIDTH - visualWidth) / 2.f,
+            cameraTop + (WINDOW_HEIGHT - visualHeight) / 2.f
+        });
+        background.setScale({ scale, scale });
+        target.draw(background);
+    };
+
+    auto drawFullWidthLaneTexture = [&](sf::RenderWindow& target, const sf::Texture& texture,
+                                        float centerY, float height)
+    {
+        const auto size = texture.getSize();
+        if (size.x == 0 || size.y == 0)
+            return;
+
+        // TrainLane has continuous rails, so do not mirror/tile it: one full-width
+        // sprite prevents a broken rail seam at the join point.
+        sf::Sprite lane(texture);
+        lane.setPosition({ 0.f, centerY - height / 2.f });
+        lane.setScale({
+            WINDOW_WIDTH / static_cast<float>(size.x),
+            height / static_cast<float>(size.y)
+        });
+        target.draw(lane);
+    };
+
+    auto drawSimpleLaneMap = [&](sf::RenderWindow& target, const sf::View& camera)
+    {
+        const float top = camera.getCenter().y - WINDOW_HEIGHT / 2.f - 150.f;
+        const float bottom = camera.getCenter().y + WINDOW_HEIGHT / 2.f + 150.f;
+
+        drawPlayingBackground(target, camera);
+
+        const int firstRow = static_cast<int>(std::floor((PLAYER_START_Y - bottom) / LANE_STEP)) - 1;
+        const int lastRow = static_cast<int>(std::ceil((PLAYER_START_Y - top) / LANE_STEP)) + 1;
+
+        for (int row = firstRow; row <= lastRow; ++row)
+        {
+            const float centerY = PLAYER_START_Y - static_cast<float>(row) * LANE_STEP;
+            const bool hazardPattern = (std::abs(row) % 2) == 1;
+
+            // The forced-safe area exists only below the ORIGINAL spawn point.
+            // It never follows the player while they move.
+            const bool belowStartPosition = centerY > PLAYER_START_Y + 1.f;
+            const bool hazard = hazardPattern && !belowStartPosition;
+
+            if (hazard)
+            {
+                const bool isTrainLane = trainHazard &&
+                    std::abs(trainHazard->getY() - centerY) < 1.f;
+                if (isTrainLane)
+                    drawFullWidthLaneTexture(target, trainLaneTexture, centerY + 1.f, 102.f);
+                else
+                    drawLaneTexture(target, cloudLaneTexture, centerY + 1.f, HAZARD_LANE_VISUAL_HEIGHT);
+            }
+            else
+            {
+                drawLaneTexture(
+                    target,
+                    safeTextureForY(centerY),
+                    centerY + 1.f,
+                    SAFE_LANE_VISUAL_HEIGHT);
+            }
+        }
+    };
+
+    auto speedFactorForTier = [](int tier)
+    {
+        return 1.f + static_cast<float>(tier) * 0.10f;
+    };
+
+    // Classic V7 uses fixed LevelConfig speed/quantity per selected level.
+
+    auto clearWorldLanes = [&]()
+    {
+        vehicleLanes.clear();
+        animalLanes.clear();
+        waterLanes.clear();
+        trainHazard.reset();
+        levelVehicleBaseSpeeds.clear();
+        levelAnimalBaseSpeeds.clear();
+        riverSafeLandYs.clear();
+        lastSupportedWaterLaneY.reset();
+        endlessRiverLanesRemaining = 0;
+        endlessRiverLaneIndex = 0;
+        endlessNormalLanesSinceRiver = 0;
+        endlessLaneSequenceIndex = 0;
+        endlessHasSpawnedRiver = false;
+        lastEndlessWaterY = 0.f;
+        classicLaneSequenceIndex = 0;
+        classicConsecutiveWater = 0;
+        lastClassicWaterY = 0.f;
+    };
+
+    auto addSafeLandBetween = [&](float yA, float yB)
+    {
+        riverSafeLandYs.push_back((yA + yB) * 0.5f);
+    };
+
+    // Infinite: every 200 points raises one difficulty step. Difficulty 1 starts
+    // with CCAR only; Difficulty 2 unlocks CBIRD; Difficulty 3 unlocks CWHALE.
+    // From then on all three types are mixed, while every difficulty also adds
+    // one more obstacle per lane (capped to keep the game playable). River
+    // sections are allowed only from Difficulty 10 onward.
+    auto spawnEndlessLane = [&](float laneY)
+    {
+        const int tier = score / INFINITE_DIFFICULTY_SCORE_STEP;
+        const int difficultyNumber = tier + 1;
+        const float speedFactor = speedFactorForTier(tier);
+        const float gapFactor = std::max(0.58f, 1.f - static_cast<float>(tier) * 0.035f);
+        const int extraObstacle = std::min(tier, 5);
+
+        // Infinite gains a dedicated train lane from Difficulty 12 onward. Only
+        // one train lane is active at a time; after it scrolls off screen, a new
+        // one may be generated later. Keep train separate from river clusters.
+        if (difficultyNumber >= INFINITE_TRAIN_START_DIFFICULTY &&
+            !trainHazard &&
+            endlessRiverLanesRemaining == 0 &&
+            endlessNormalLanesSinceRiver >= 4 &&
+            endlessLaneSequenceIndex > 0 &&
+            (endlessLaneSequenceIndex % 9) == 5)
+        {
+            trainHazard.emplace(laneY);
+            ++endlessLaneSequenceIndex;
+            ++endlessNormalLanesSinceRiver;
+            return;
+        }
+
+        if (difficultyNumber >= INFINITE_RIVER_START_DIFFICULTY &&
+            endlessRiverLanesRemaining == 0 &&
+            endlessNormalLanesSinceRiver >= 6 &&
+            (!endlessHasSpawnedRiver || randomInt(0, 3) == 0))
+        {
+            // Guarantee the first river section once Difficulty 10 is reached;
+            // later river sections are interleaved probabilistically.
+            endlessRiverLanesRemaining = 3;
+            endlessRiverLaneIndex = 0;
+            endlessHasSpawnedRiver = true;
+        }
+
+        if (endlessRiverLanesRemaining > 0)
+        {
+            const float direction = (endlessRiverLaneIndex % 2 == 0) ? 1.f : -1.f;
+            const float laneSpeed = direction * randomFloat(1.8f, 3.4f) * speedFactor;
+
+            if (endlessRiverLaneIndex == 2)
+                addSafeLandBetween(lastEndlessWaterY, laneY);
+
+            waterLanes.emplace_back(laneY, laneSpeed, 4 + std::min(tier / 3, 2),
+                220.f, 120.f * gapFactor, 220.f * gapFactor);
+            lastEndlessWaterY = laneY;
+            ++endlessRiverLaneIndex;
+            --endlessRiverLanesRemaining;
+
+            if (endlessRiverLanesRemaining == 0)
+                endlessNormalLanesSinceRiver = 0;
+            return;
+        }
+
+        ++endlessNormalLanesSinceRiver;
+        const float direction = (randomInt(0, 1) == 0 ? 1.f : -1.f);
+        const float baseSpeed = randomFloat(2.f, 6.f);
+        const float laneSpeed = direction * baseSpeed * speedFactor;
+
+        // Unlock order requested by the design: CCAR -> CBIRD -> CWHALE.
+        const int unlockedTypeCount = std::min(3, difficultyNumber);
+        const int sequenceForLane = endlessLaneSequenceIndex;
+        const int laneType = sequenceForLane % unlockedTypeCount;
+        ++endlessLaneSequenceIndex;
+
+        if (laneType == 0)
+        {
+            vehicleLanes.emplace_back(laneY, laneSpeed, 3 + extraObstacle,
+                150.f * gapFactor, 500.f * gapFactor,
+                [&carTexture](float value) { return std::make_unique<CCAR>(carTexture, value); });
+            // Only some car lanes receive a light. The phase offset makes every
+            // light independent, so a red light stops THIS lane only.
+            if (sequenceForLane % 3 == 0)
+                vehicleLanes.back().enableTrafficLight(static_cast<float>((sequenceForLane % 4) * 1.35f));
+        }
+        else if (laneType == 1)
+        {
+            animalLanes.emplace_back(laneY, laneSpeed, 3 + extraObstacle,
+                120.f * gapFactor, 430.f * gapFactor,
+                [&birdTexture](float value) { return std::make_unique<CBIRD>(birdTexture, value); }, 1);
+        }
+        else
+        {
+            animalLanes.emplace_back(laneY, laneSpeed, 2 + extraObstacle,
+                200.f * gapFactor, 600.f * gapFactor,
+                [&whaleTexture](float value) { return std::make_unique<CWHALE>(whaleTexture, value); }, 2);
+        }
+    };
+
+    auto bootstrapEndless = [&](float anchorY)
+    {
+        clearWorldLanes();
+
+        // Start slightly below the player so a loaded game also reconstructs
+        // nearby lanes behind and ahead of the saved position.
+        // Keep the starting/rest lane completely safe: first hazard is well above the player.
+        float cursor = previousHazardLaneY(anchorY - 90.f);
+        for (int i = 0; i < 8; ++i)
+        {
+            spawnEndlessLane(cursor);
+            cursor = previousHazardLaneY(cursor);
+        }
+        nextLaneY = cursor;
+
+        difficultyTier = score / INFINITE_DIFFICULTY_SCORE_STEP;
+        level = difficultyTier + 1;
+        bestPlayerY = player.getPosition().y;
+        maxCameraY = std::min(INITIAL_CAMERA_Y, player.getPosition().y - 100.f);
+
+        playerMovementLocked = true;
+        movementLockClock.restart();
+    };
+
+    auto spawnClassicLane = [&](float laneY, const LevelConfig& config, int sequenceIndex)
+    {
+        const int cycleIndex = sequenceIndex % std::max(1, config.dangerLanes);
+        const float direction = config.alternateDirection
+            ? ((sequenceIndex % 2 == 0) ? 1.f : -1.f)
+            : 1.f;
+        // V8 Classic: each level has a FIXED difficulty from LevelConfig.
+        // There is no internal stage speed multiplier anymore.
+        const float fixedSpeed = (config.minSpeed + config.maxSpeed) * 0.5f;
+        const float laneSpeed = direction * fixedSpeed;
+
+        bool makeWater = false;
+        if (currentStage >= 5)
+        {
+            if (config.mechanic == LevelMechanic::Water)
+            {
+                makeWater = true;
+            }
+            else if ((config.mechanic == LevelMechanic::Mixed || config.mechanic == LevelMechanic::Chaos) &&
+                config.waterLaneCount > 0)
+            {
+                for (int j = 0; j < config.waterLaneCount; ++j)
+                {
+                    const int waterSlot = ((j + 1) * config.dangerLanes) / (config.waterLaneCount + 1);
+                    if (cycleIndex == waterSlot) { makeWater = true; break; }
+                }
+            }
+        }
+
+        const bool makeTrainLane = config.trainHazard && !trainHazard &&
+            cycleIndex == config.dangerLanes / 2;
+
+        if (makeTrainLane)
+        {
+            trainHazard.emplace(laneY);
+            classicConsecutiveWater = 0;
+            return;
+        }
+
+        if (makeWater)
+        {
+            if (classicConsecutiveWater >= 2)
+            {
+                addSafeLandBetween(lastClassicWaterY, laneY);
+                classicConsecutiveWater = 0;
+            }
+
+            waterLanes.emplace_back(laneY, laneSpeed,
+                config.maxObstacles,
+                config.logWidth, config.minGap, config.maxGap);
+            ++classicConsecutiveWater;
+            lastClassicWaterY = laneY;
+            return;
+        }
+
+        classicConsecutiveWater = 0;
+        const int obstacleCount = config.maxObstacles;
+
+        // Classic obstacle unlock order:
+        // L1: CCAR only.
+        // L2: CCAR only.
+        // L3: CCAR + CBIRD.
+        // L4-L10: CCAR + CBIRD + CWHALE.
+        int objectType = 0; // 0 car, 1 bird, 2 whale
+        if (currentStage >= 4)
+            objectType = sequenceIndex % 3;
+        else if (currentStage >= 3)
+            objectType = (sequenceIndex % 3 == 1) ? 1 : 0;
+
+        if (objectType == 0)
+        {
+            vehicleLanes.emplace_back(laneY, laneSpeed, obstacleCount,
+                config.minGap, config.maxGap,
+                [&carTexture](float value) { return std::make_unique<CCAR>(carTexture, value); });
+            if (sequenceIndex % 3 == 0)
+                vehicleLanes.back().enableTrafficLight(static_cast<float>((sequenceIndex % 4) * 1.35f));
+            levelVehicleBaseSpeeds.push_back(laneSpeed);
+        }
+        else if (objectType == 1)
+        {
+            animalLanes.emplace_back(laneY, laneSpeed, obstacleCount,
+                config.minGap, config.maxGap,
+                [&birdTexture](float value) { return std::make_unique<CBIRD>(birdTexture, value); }, 1);
+            levelAnimalBaseSpeeds.push_back(laneSpeed);
+        }
+        else
+        {
+            animalLanes.emplace_back(laneY, laneSpeed, std::max(2, obstacleCount - 1),
+                config.minGap, config.maxGap,
+                [&whaleTexture](float value) { return std::make_unique<CWHALE>(whaleTexture, value); }, 2);
+            levelAnimalBaseSpeeds.push_back(laneSpeed);
+        }
+    };
+
+    auto buildLevelStage = [&](bool /*resetPlayer*/)
+    {
+        // Classic NEVER resumes a half-played map. Every level selection/replay is
+        // reconstructed from its canonical start, using Level 1's coordinate origin.
+        applyClassicLevelSeed(currentStage);
+        clearWorldLanes();
+        campaignComplete = false;
+
+        const LevelConfig& config = GetLevelConfig(currentStage);
+        level = currentStage;
+        difficultyTier = 0;
+        score = 0;
+        lives = 1;
+
+        // HARD RESET: entering/replaying ANY Classic level must look like a
+        // fresh program launch at Level 1's coordinate origin.
+        player.setCheckpoint({ PLAYER_START_X, PLAYER_START_Y }, true);
+        bestPlayerY = PLAYER_START_Y;
+        maxCameraY = INITIAL_CAMERA_Y;
+        classicCameraHardResetRequested = true;
+
+        invulnerable = false;
+        player.setInvulnerableVisual(false);
+        hitClock.restart();
+        lastSupportedWaterLaneY.reset();
+        lastAutoSavedScore = -1;
+        lastAutoSavedStage = -1;
+
+        // Remove any saved world snapshot from the previous Classic level before
+        // the canonical layout for the selected level is generated.
+        currentProfile.score = 0;
+        currentProfile.lives = 1;
+        currentProfile.playerX = PLAYER_START_X;
+        currentProfile.playerY = PLAYER_START_Y;
+        currentProfile.checkpointX = PLAYER_START_X;
+        currentProfile.checkpointY = PLAYER_START_Y;
+        currentProfile.cameraY = INITIAL_CAMERA_Y;
+        currentProfile.bestPlayerY = PLAYER_START_Y;
+        currentProfile.nextLaneY = FIRST_HAZARD_Y;
+        currentProfile.difficultyTier = 0;
+        currentProfile.lanes.clear();
+        currentProfile.hasTrain = false;
+
+        classicLaneSequenceIndex = 0;
+        classicConsecutiveWater = 0;
+        lastClassicWaterY = 0.f;
+
+        // As in Infinite mode, the starting lane is a guaranteed safe lane.
+        float cursor = FIRST_HAZARD_Y;
+        for (int i = 0; i < config.dangerLanes; ++i)
+        {
+            spawnClassicLane(cursor, config, classicLaneSequenceIndex++);
+            cursor = previousHazardLaneY(cursor);
+        }
+        nextLaneY = cursor;
+
+        stageClock.restart();
+        playerMovementLocked = true;
+        movementLockClock.restart();
+
+        gameMessage.setString(
+            "CLASSIC LEVEL " + std::to_string(currentStage) + "/10 - " + config.title +
+            " | TARGET: 1000");
+        showMessage = true;
+        messageClock.restart();
+    };
+
+    auto allObstaclesAreVisible = [&]()
+    {
+        if (vehicleLanes.empty() && animalLanes.empty() && waterLanes.empty())
+            return false;
+
+        for (const auto& lane : vehicleLanes)
+        {
+            if (!lane.hasVisibleObstacle(WINDOW_WIDTH))
+                return false;
+        }
+        for (const auto& lane : animalLanes)
+        {
+            if (!lane.hasVisibleObstacle(WINDOW_WIDTH))
+                return false;
+        }
+        for (const auto& lane : waterLanes)
+        {
+            if (!lane.hasVisiblePlatform(WINDOW_WIDTH))
+                return false;
+        }
+        return true;
+    };
+
+    auto captureWorldSnapshot = [&]()
+    {
+        currentProfile.lanes.clear();
+        currentProfile.lanes.reserve(vehicleLanes.size() + animalLanes.size() + waterLanes.size());
+
+        for (const auto& lane : vehicleLanes)
+        {
+            SavedLane saved;
+            saved.type = 0;
+            saved.y = lane.getY();
+            saved.speed = lane.getSpeed();
+            saved.minGap = lane.getMinGap();
+            saved.maxGap = lane.getMaxGap();
+            saved.objectX = lane.getObstacleXPositions();
+            saved.trafficControlled = lane.hasTrafficLight();
+            saved.trafficOffsetSeconds = lane.getTrafficOffsetSeconds();
+            currentProfile.lanes.push_back(std::move(saved));
+        }
+
+        for (const auto& lane : animalLanes)
+        {
+            SavedLane saved;
+            saved.type = lane.getObstacleType();
+            saved.y = lane.getY();
+            saved.speed = lane.getSpeed();
+            saved.minGap = lane.getMinGap();
+            saved.maxGap = lane.getMaxGap();
+            saved.objectX = lane.getObstacleXPositions();
+            currentProfile.lanes.push_back(std::move(saved));
+        }
+
+        for (const auto& lane : waterLanes)
+        {
+            SavedLane saved;
+            saved.type = 3;
+            saved.y = lane.getY();
+            saved.speed = lane.getSpeed();
+            saved.minGap = lane.getMinGap();
+            saved.maxGap = lane.getMaxGap();
+            saved.objectWidth = lane.getLogWidth();
+            saved.objectX = lane.getLogXPositions();
+            currentProfile.lanes.push_back(std::move(saved));
+        }
+
+        currentProfile.hasTrain = trainHazard.has_value();
+        currentProfile.trainY = trainHazard ? trainHazard->getY() : 0.f;
+    };
+
+    auto restoreWorldSnapshot = [&]()
+    {
+        if (currentProfile.lanes.empty())
+            return false;
+
+        clearWorldLanes();
+
+        for (const auto& saved : currentProfile.lanes)
+        {
+            const int count = static_cast<int>(saved.objectX.size());
+            const float minGap = saved.minGap > 0.f ? saved.minGap : 150.f;
+            const float maxGap = saved.maxGap > 0.f ? saved.maxGap : 400.f;
+
+            if (saved.type == 0)
+            {
+                vehicleLanes.emplace_back(saved.y, saved.speed, count, minGap, maxGap,
+                    [&carTexture](float value) { return std::make_unique<CCAR>(carTexture, value); });
+                vehicleLanes.back().setObstacleXPositions(saved.objectX);
+                if (saved.trafficControlled)
+                    vehicleLanes.back().enableTrafficLight(saved.trafficOffsetSeconds);
+                levelVehicleBaseSpeeds.push_back(saved.speed);
+            }
+            else if (saved.type == 1)
+            {
+                animalLanes.emplace_back(saved.y, saved.speed, count, minGap, maxGap,
+                    [&birdTexture](float value) { return std::make_unique<CBIRD>(birdTexture, value); }, 1);
+                animalLanes.back().setObstacleXPositions(saved.objectX);
+                levelAnimalBaseSpeeds.push_back(saved.speed);
+            }
+            else if (saved.type == 2)
+            {
+                animalLanes.emplace_back(saved.y, saved.speed, count, minGap, maxGap,
+                    [&whaleTexture](float value) { return std::make_unique<CWHALE>(whaleTexture, value); }, 2);
+                animalLanes.back().setObstacleXPositions(saved.objectX);
+                levelAnimalBaseSpeeds.push_back(saved.speed);
+            }
+            else if (saved.type == 3)
+            {
+                const float width = saved.objectWidth > 0.f ? saved.objectWidth : 220.f;
+                waterLanes.emplace_back(saved.y, saved.speed, count, width, minGap, maxGap);
+                waterLanes.back().setLogXPositions(saved.objectX);
+            }
+        }
+
+        if (currentProfile.hasTrain)
+            trainHazard.emplace(currentProfile.trainY);
+
+        // Rebuild safe checkpoints between neighbouring saved river lanes.
+        std::vector<float> waterYs;
+        for (const auto& lane : waterLanes) waterYs.push_back(lane.getY());
+        std::sort(waterYs.begin(), waterYs.end(), std::greater<float>());
+        for (std::size_t i = 1; i < waterYs.size(); ++i)
+        {
+            if (std::abs(waterYs[i - 1] - waterYs[i]) <= HAZARD_REPEAT + 5.f)
+                addSafeLandBetween(waterYs[i - 1], waterYs[i]);
+        }
+
+        nextLaneY = currentProfile.nextLaneY;
+        difficultyTier = currentProfile.difficultyTier;
+        endlessLaneSequenceIndex = currentProfile.endlessLaneSequenceIndex;
+        classicLaneSequenceIndex = currentProfile.classicLaneSequenceIndex;
+        bestPlayerY = currentProfile.bestPlayerY;
+        maxCameraY = currentProfile.cameraY;
+        playerMovementLocked = false;
+        return true;
+    };
+
+    auto syncCurrentProfile = [&]()
+    {
+        currentProfile.gameMode = (gameMode == GameMode::Level) ? 1 : 0;
+        currentProfile.currentStage = currentStage;
+        currentProfile.classicStage = 1;
+        currentProfile.level = level;
+        currentProfile.score = score;
+        currentProfile.lives = lives;
+        currentProfile.playerX = player.getPosition().x;
+        currentProfile.playerY = player.getPosition().y;
+        currentProfile.checkpointX = player.getCheckpoint().x;
+        currentProfile.checkpointY = player.getCheckpoint().y;
+        currentProfile.worldSeed = currentWorldSeed;
+        currentProfile.cameraY = maxCameraY;
+        currentProfile.bestPlayerY = bestPlayerY;
+        currentProfile.nextLaneY = nextLaneY;
+        currentProfile.difficultyTier = difficultyTier;
+        currentProfile.endlessLaneSequenceIndex = endlessLaneSequenceIndex;
+        currentProfile.classicLaneSequenceIndex = classicLaneSequenceIndex;
+        captureWorldSnapshot();
+    };
+
+    auto saveActiveSlot = [&]()
+    {
+        if (activeSlot < 0)
+            return false;
+
+        syncCurrentProfile();
+        const bool ok = CSAVEGAME::Save(currentProfile, Menu::getSlotPath(activeSlot));
+        if (ok)
+        {
+            lastAutoSavedScore = score;
+            lastAutoSavedStage = currentStage;
+        }
+        return ok;
+    };
+
+    auto saveSlotForExit = [&]()
+    {
+        if (activeSlot < 0)
+            return false;
+
+        // Normal Classic save behaviour is unchanged. Infinite exits are snapped
+        // to the nearest previously reached safe lane so Load never starts on
+        // Cloud/River/Train danger. This changes the SAVED position only; it does
+        // not teleport the visible player before the menu/console closes.
+        syncCurrentProfile();
+
+        if (gameMode == GameMode::Endless)
+        {
+            const float safeY = safeLaneAtOrBelowY(player.getPosition().y);
+            currentProfile.playerX = PLAYER_START_X;
+            currentProfile.playerY = safeY;
+            currentProfile.checkpointX = PLAYER_START_X;
+            currentProfile.checkpointY = safeY;
+            currentProfile.cameraY = (std::abs(safeY - PLAYER_START_Y) < 1.f)
+                ? INITIAL_CAMERA_Y
+                : safeY - 100.f;
+        }
+
+        const bool ok = CSAVEGAME::Save(currentProfile, Menu::getSlotPath(activeSlot));
+        if (ok)
+        {
+            lastAutoSavedScore = score;
+            lastAutoSavedStage = currentStage;
+        }
+        return ok;
+    };
+
+    auto showWelcome = [&]()
+    {
+        sf::String welcome("WELCOME ");
+        welcome += sf::String::fromUtf8(
+            currentProfile.playerName.begin(),
+            currentProfile.playerName.end());
+        welcome += " | SCORE: ";
+        welcome += std::to_string(score);
+        gameMessage.setString(welcome);
+        showMessage = true;
+        messageClock.restart();
+    };
+
+    auto respawnOnWaterLog = [&](float preferredLaneY)
+    {
+        if (waterLanes.empty()) return false;
+        CWaterLane* bestLane = nullptr;
+        float bestDistance = 1e9f;
+        for (auto& lane : waterLanes)
+        {
+            const float d = std::abs(lane.getY() - preferredLaneY);
+            if (d < bestDistance) { bestDistance = d; bestLane = &lane; }
+        }
+        if (!bestLane) return false;
+        const auto point = bestLane->getRespawnPoint(player.getPosition().x, WINDOW_WIDTH);
+        if (!point) return false;
+        player.setPosition(*point);
+        lastSupportedWaterLaneY = bestLane->getY();
+        return true;
+    };
+
+    auto respawnAtNearestSafeLand = [&](float referenceY)
+    {
+        // With the repeating map there is always a safe band exactly between
+        // consecutive hazard bands.  Snap to its centre instead of searching
+        // arbitrary 50 px rows (which caused old river divider deaths).
+        float safeY = nearestSafeLaneY(referenceY);
+
+        // If an explicit river-safe strip is closer, use it.
+        float bestDistance = std::abs(safeY - referenceY);
+        for (float landY : riverSafeLandYs)
+        {
+            const float d = std::abs(landY - referenceY);
+            if (d < bestDistance)
+            {
+                bestDistance = d;
+                safeY = landY;
+            }
+        }
+
+        player.setCheckpoint({ PLAYER_START_X, safeY }, true);
+        maxCameraY = (std::abs(safeY - PLAYER_START_Y) < 1.f)
+            ? INITIAL_CAMERA_Y
+            : safeY - 100.f;
+    };
+
+    auto resetInfiniteGameplayState = [&](bool preserveGameOverResult)
+    {
+        // A finished Infinite run is discarded as gameplay state.  Do NOT call
+        // reseedForNewGame() here: doing so creates a different random layout and
+        // is the main reason a restart can look as if position/map became random.
+        const int preservedHighScore = currentProfile.highScore;
+        const int preservedGameOverScore = gameOverScore;
+        const bool preservedNewHighScore = gameOverNewHighScore;
+
+        // Reuse the seed that belonged to this slot/run so pressing ENTER rebuilds
+        // the same canonical starting layout instead of a brand-new random world.
+        unsigned int restartSeed = currentProfile.worldSeed;
+        if (restartSeed == 0)
+            restartSeed = currentWorldSeed;
+        if (restartSeed == 0)
+            restartSeed = 1u;
+        applySavedSeed(restartSeed);
+
+        score = 0;
+        lives = 3;
+        level = 1;
+        difficultyTier = 0;
+        currentStage = 1;
+        campaignComplete = false;
+
+        // Reset the ACTUAL player position and its checkpoint, not only player.reset().
+        player.setCheckpoint({ PLAYER_START_X, PLAYER_START_Y }, true);
+        bestPlayerY = PLAYER_START_Y;
+        maxCameraY = INITIAL_CAMERA_Y;
+
+        invulnerable = false;
+        player.setInvulnerableVisual(false);
+        hitClock.restart();
+        lastSupportedWaterLaneY.reset();
+        lastAutoSavedScore = -1;
+        lastAutoSavedStage = -1;
+
+        // bootstrapEndless() clears all old road/animal/river/train lanes and resets
+        // every Infinite generator counter before rebuilding from PLAYER_START_Y.
+        bootstrapEndless(PLAYER_START_Y);
+
+        currentProfile.score = 0;
+        currentProfile.lives = 3;
+        currentProfile.level = 1;
+        currentProfile.currentStage = 1;
+        currentProfile.difficultyTier = 0;
+        currentProfile.playerX = PLAYER_START_X;
+        currentProfile.playerY = PLAYER_START_Y;
+        currentProfile.checkpointX = PLAYER_START_X;
+        currentProfile.checkpointY = PLAYER_START_Y;
+        currentProfile.cameraY = INITIAL_CAMERA_Y;
+        currentProfile.bestPlayerY = PLAYER_START_Y;
+        currentProfile.highScore = preservedHighScore;
+        saveActiveSlot();
+
+        if (preserveGameOverResult)
+        {
+            // Keep only the finished-run result for the Game Over overlay.
+            gameOverScore = preservedGameOverScore;
+            gameOverNewHighScore = preservedNewHighScore;
+        }
+        else
+        {
+            gameOverScore = 0;
+            gameOverNewHighScore = false;
+        }
+    };
+
+    auto handlePlayerHit = [&](bool waterDeath, float waterLaneY)
+    {
+        if (invulnerable) return;
+        sounds.playHit();
+        --lives;
+
+        // CLASSIC is one-life only. Ranking is based on completed LEVELS, not
+        // this failed run's score, so Classic Game Over never shows NEW HIGH SCORE.
+        if (gameMode == GameMode::Level)
+        {
+            gameOverScore = score;
+            gameOverNewHighScore = false;
+            currentProfile.highScore = std::max(currentProfile.highScore, gameOverScore);
+            lives = 0;
+            sounds.playLose();
+            state = CGAME::GameOver;
+            saveActiveSlot();
+            return;
+        }
+
+        // Infinite keeps three lives. A non-final hit uses the normal respawn rule.
+        if (lives > 0)
+        {
+            if (!(waterDeath && respawnOnWaterLog(waterLaneY)))
+                player.reset();
+            hitClock.restart();
+            invulnerable = true;
+            gameMessage.setString(waterDeath
+                ? "WATER! RESPAWN - LIVES: " + std::to_string(lives)
+                : "HIT! LIVES LEFT: " + std::to_string(lives));
+            showMessage = true;
+            messageClock.restart();
+            return;
+        }
+
+        // Infinite leaderboard compares COMPLETED RUNS, not save-slot metadata.
+        // Compare with the previous Top 1 first, then record this run.
+        gameOverScore = score;
+        const int previousTop = LeaderboardManager::topInfiniteScore();
+        gameOverNewHighScore = gameOverScore > previousTop;
+        LeaderboardManager::recordInfiniteRun(
+            currentProfile.playerName, currentProfile.playerId, gameOverScore);
+        currentProfile.highScore = std::max(currentProfile.highScore, gameOverScore);
+
+        lives = 0;
+        sounds.playLose();
+        state = CGAME::GameOver;
+
+        // Do not clear lane vectors from inside a collision iteration. Defer the
+        // canonical reset until all current collision loops have safely finished.
+        pendingInfiniteResetAfterGameOver = true;
+    };
+
+    auto openClassicLevelSelect = [&]()
+    {
+        // The next selected Classic level always starts from score 0 / one life.
+        score = 0;
+        lives = 1;
+        currentProfile.score = 0;
+        currentProfile.lives = 1;
+        currentProfile.classicStage = 1;
+        currentProfile.lanes.clear();
+        currentProfile.hasTrain = false;
+        currentProfile.playerX = PLAYER_START_X;
+        currentProfile.playerY = PLAYER_START_Y;
+        currentProfile.checkpointX = PLAYER_START_X;
+        currentProfile.checkpointY = PLAYER_START_Y;
+        if (activeSlot >= 0)
+            CSAVEGAME::Save(currentProfile, Menu::getSlotPath(activeSlot));
+        menu.showClassicLevelSelect(currentProfile, activeSlot);
+        state = CGAME::Menu;
+        campaignComplete = false;
+    };
+
+    sf::View camera(sf::FloatRect({ 0.f, 0.f }, { WINDOW_WIDTH, WINDOW_HEIGHT }));
+    camera.setCenter({ WINDOW_WIDTH / 2.f, INITIAL_CAMERA_Y });
+
+    while (window.isOpen())
+    {
+        while (const std::optional event = window.pollEvent())
+        {
+            if (event->is<sf::Event::Closed>())
+            {
+                if (activeSlot >= 0 && (state == CGAME::Playing || state == CGAME::Paused))
+                    saveSlotForExit();
+                window.close();
+            }
+
+            switch (state)
+            {
+            case CGAME::Menu:
+            {
+                menu.handleEvent(window, *event, state);
+                break;
+            }
+
+            case CGAME::Playing:
+            {
+                if (campaignComplete)
+                {
+                    if (const auto* key = event->getIf<sf::Event::KeyPressed>())
+                    {
+                        if (key->code == sf::Keyboard::Key::Enter)
+                        {
+                            saveActiveSlot();
+                            state = CGAME::Menu;
+                            campaignComplete = false;
+                            break;
+                        }
+                    }
+                }
+
+                if (pauseMenu.handlePauseButtonClick(window, *event))
+                {
+                    state = CGAME::Paused;
+                    backgroundMusic.pause();
+                    break;
+                }
+
+                if (const auto* key = event->getIf<sf::Event::KeyPressed>())
+                {
+                    if (key->code == sf::Keyboard::Key::Escape)
+                    {
+                        state = CGAME::Paused;
+                        backgroundMusic.pause();
+                        break;
+                    }
+
+                    // F3 toggles collision boxes. They are OFF by default for a clean presentation.
+                    if (key->code == sf::Keyboard::Key::F3)
+                    {
+                        showDebugHitboxes = !showDebugHitboxes;
+                        break;
+                    }
+
+                    // Quick save into the current profile slot.
+                    if (key->code == sf::Keyboard::Key::L)
+                    {
+                        if (saveActiveSlot())
+                            gameMessage.setString("SAVE SUCCESS - SLOT " + std::to_string(activeSlot + 1));
+                        else
+                            gameMessage.setString("SAVE FAILED");
+
+                        showMessage = true;
+                        messageClock.restart();
+                        break;
+                    }
+
+                    if (key->code == sf::Keyboard::Key::Tab)
+                    {
+                        currentSkinIndex = (currentSkinIndex + 1) % assets.playerSkinCount();
+                        player.setTexture(currentPlayerTexture());
+                        gameMessage.setString("SKIN: " + playerSkinNames[currentSkinIndex] + "  (TAB)");
+                        showMessage = true;
+                        messageClock.restart();
+                        break;
+                    }
+
+                    if (!playerMovementLocked && !campaignComplete)
+                    {
+                        const bool movementKey =
+                            key->code == sf::Keyboard::Key::Up || key->code == sf::Keyboard::Key::W ||
+                            key->code == sf::Keyboard::Key::Down || key->code == sf::Keyboard::Key::S ||
+                            key->code == sf::Keyboard::Key::Left || key->code == sf::Keyboard::Key::A ||
+                            key->code == sf::Keyboard::Key::Right || key->code == sf::Keyboard::Key::D;
+                        player.handleInput(*key, currentPlayerTexture());
+                        if (movementKey) sounds.playMove();
+                    }
+                }
+
+                break;
+            }
+
+            case CGAME::Paused:
+            {
+                const PauseMenu::Action action =
+                    pauseMenu.handleEvent(window, *event, backgroundMusic);
+
+                if (action == PauseMenu::Action::Resume)
+                {
+                    state = CGAME::Playing;
+                    backgroundMusic.play();
+                }
+                else if (action == PauseMenu::Action::MainMenu)
+                {
+                    if (gameMode == GameMode::Endless)
+                        saveSlotForExit();
+                    else
+                        saveActiveSlot();
+                    state = CGAME::Menu;
+                    pauseMenu.reset();
+                    backgroundMusic.play();
+                    campaignComplete = false;
+                }
+
+                break;
+            }
+
+            case CGAME::GameOver:
+            {
+                if (const auto* key = event->getIf<sf::Event::KeyPressed>())
+                {
+                    if (key->code == sf::Keyboard::Key::Enter || key->code == sf::Keyboard::Key::Space)
+                    {
+                        // Game Over music must stop the instant the overlay disappears.
+                        sounds.stopLose();
+                        if (gameMode == GameMode::Level)
+                            openClassicLevelSelect();
+                        else
+                        {
+                            // Guarantee a completely clean Infinite restart on ENTER.
+                            // The Game Over path already reset once; repeating the reset
+                            // with the SAME seed is deterministic and prevents an old
+                            // checkpoint/camera/snapshot from leaking into the next run.
+                            resetInfiniteGameplayState(false);
+                            player.setCheckpoint({ PLAYER_START_X, PLAYER_START_Y }, true);
+                            score = 0;
+                            lives = 3;
+                            difficultyTier = 0;
+                            level = 1;
+                            maxCameraY = INITIAL_CAMERA_Y;
+                            camera.setCenter({ WINDOW_WIDTH / 2.f, INITIAL_CAMERA_Y });
+                            pendingInfiniteResetAfterGameOver = false;
+                            state = CGAME::Playing;
+                            showWelcome();
+                        }
+                    }
+                    else if (key->code == sf::Keyboard::Key::Escape)
+                    {
+                        sounds.stopLose();
+                        if (gameMode == GameMode::Level)
+                        {
+                            score = 0; lives = 1; currentProfile.score = 0; currentProfile.lives = 1;
+                            currentProfile.lanes.clear(); currentProfile.hasTrain = false;
+                            currentProfile.playerX = PLAYER_START_X; currentProfile.playerY = PLAYER_START_Y;
+                            currentProfile.checkpointX = PLAYER_START_X; currentProfile.checkpointY = PLAYER_START_Y;
+                            if (activeSlot >= 0) CSAVEGAME::Save(currentProfile, Menu::getSlotPath(activeSlot));
+                        }
+                        // Infinite slot is already in canonical score=0/difficulty=1 state.
+                        state = CGAME::Menu;
+                    }
+                }
+                break;
+            }
+
+            case CGAME::Victory:
+            {
+                if (const auto* key = event->getIf<sf::Event::KeyPressed>())
+                {
+                    if (key->code == sf::Keyboard::Key::Enter || key->code == sf::Keyboard::Key::Space)
+                        openClassicLevelSelect();
+                    else if (key->code == sf::Keyboard::Key::Escape)
+                    {
+                        score = 0; lives = 1; currentProfile.score = 0; currentProfile.lives = 1;
+                        currentProfile.lanes.clear(); currentProfile.hasTrain = false;
+                        if (activeSlot >= 0) CSAVEGAME::Save(currentProfile, Menu::getSlotPath(activeSlot));
+                        campaignComplete = false; state = CGAME::Menu;
+                    }
+                }
+                break;
+            }
+
+            default:
+                break;
+            }
+        }
+
+        // ===== NEW GAME CREATED FROM THE NAME/ID BOX =====
+        if (menu.isStartGame())
+        {
+            currentProfile = menu.getRequestedSave();
+            activeSlot = menu.getRequestedSlot();
+            gameMode = currentProfile.gameMode == 1 ? GameMode::Level : GameMode::Endless;
+
+            // NEW GAME = completely fresh run. Infinite receives a new slot seed.
+            // Classic does NOT need a random seed here because buildLevelStage()
+            // applies the deterministic seed of the selected Classic level.
+            if (gameMode == GameMode::Endless)
+                reseedForNewGame();
+            currentStage = (gameMode == GameMode::Level)
+                ? std::clamp(currentProfile.currentStage, 1, 10) : 1;
+                level = (gameMode == GameMode::Level) ? currentStage : 1;
+            score = 0;
+            lives = (gameMode == GameMode::Level) ? 1 : 3;
+            lastAutoSavedScore = -1;
+            lastAutoSavedStage = -1;
+            showMessage = false;
+            campaignComplete = false;
+
+            player.setCheckpoint({ PLAYER_START_X, PLAYER_START_Y }, true);
+            invulnerable = false;
+            player.setInvulnerableVisual(false);
+            hitClock.restart();
+
+            if (gameMode == GameMode::Endless)
+                bootstrapEndless(PLAYER_START_Y);
+            else
+                buildLevelStage(true);
+
+            pauseMenu.reset();
+            saveActiveSlot();
+            showWelcome();
+            menu.resetStartFlag();
+        }
+
+        // ===== LOAD ONE OF THE 10 OCCUPIED SLOTS =====
+        if (menu.isLoadGame())
+        {
+            currentProfile = menu.getRequestedSave();
+            activeSlot = menu.getRequestedSlot();
+            gameMode = currentProfile.gameMode == 1 ? GameMode::Level : GameMode::Endless;
+            currentStage = std::clamp(currentProfile.currentStage, 1, 10);
+            level = (gameMode == GameMode::Level) ? currentStage : currentProfile.level;
+            score = currentProfile.score;
+            lives = (gameMode == GameMode::Level) ? 1 : std::max(1, currentProfile.lives);
+            campaignComplete = false;
+
+            player.setPosition({ currentProfile.playerX, currentProfile.playerY });
+            player.setCheckpoint({ currentProfile.checkpointX, currentProfile.checkpointY });
+            invulnerable = false;
+            player.setInvulnerableVisual(false);
+            hitClock.restart();
+
+            const unsigned int fallbackSeed = static_cast<unsigned int>(
+                std::hash<std::string>{}(currentProfile.playerId + currentProfile.playerName));
+            applySavedSeed(currentProfile.worldSeed != 0 ? currentProfile.worldSeed : fallbackSeed);
+
+            if (!restoreWorldSnapshot())
+            {
+                if (gameMode == GameMode::Endless)
+                    bootstrapEndless(player.getPosition().y);
+                else
+                    buildLevelStage(false);
+            }
+
+            lastAutoSavedScore = score;
+            lastAutoSavedStage = currentStage;
+            pauseMenu.reset();
+            showWelcome();
+            menu.resetLoadFlag();
+        }
+
+        // buildLevelStage() can run before this point.  Reset the actual SFML View
+        // here so entering any Classic level in the same program run is visually
+        // identical to launching the program fresh at the canonical origin.
+        if (classicCameraHardResetRequested)
+        {
+            maxCameraY = INITIAL_CAMERA_Y;
+            camera.setCenter({ WINDOW_WIDTH / 2.f, INITIAL_CAMERA_Y });
+            classicCameraHardResetRequested = false;
+        }
+
+        switch (state)
+        {
+        case CGAME::Menu:
+        {
+            menu.update();
+            break;
+        }
+
+        case CGAME::Playing:
+        {
+            if (campaignComplete)
+                break;
+
+            if (invulnerable)
+            {
+                const float t = hitClock.getElapsedTime().asSeconds();
+                if (t >= INVULNERABLE_SECONDS)
+                {
+                    invulnerable = false;
+                    player.setInvulnerableVisual(false);
+                }
+                else
+                {
+                    player.setInvulnerableVisual(true, static_cast<int>(t * 12.f) % 2 == 0);
+                }
+            }
+
+            // Score increases only when reaching a new highest position.
+            if (player.getPosition().y < bestPlayerY)
+            {
+                const float progress = bestPlayerY - player.getPosition().y;
+                const int newSteps = static_cast<int>(progress / 50.f);
+                if (newSteps > 0)
+                {
+                    score += newSteps * 10;
+                    bestPlayerY -= static_cast<float>(newSteps) * 50.f;
+                }
+            }
+
+            // Infinite Mode difficulty: +10% lane speed every 200 points.
+            if (gameMode == GameMode::Endless)
+            {
+                const int newDifficultyTier = score / INFINITE_DIFFICULTY_SCORE_STEP;
+                if (newDifficultyTier > difficultyTier)
+                {
+                    const float oldFactor = speedFactorForTier(difficultyTier);
+                    const float newFactor = speedFactorForTier(newDifficultyTier);
+                    const float ratio = newFactor / oldFactor;
+
+                    for (auto& lane : vehicleLanes)
+                        lane.setSpeed(lane.getSpeed() * ratio);
+                    for (auto& lane : animalLanes)
+                        lane.setSpeed(lane.getSpeed() * ratio);
+                    for (auto& lane : waterLanes)
+                        lane.setSpeed(lane.getSpeed() * ratio);
+
+                    difficultyTier = newDifficultyTier;
+                    level = difficultyTier + 1;
+
+                    if (level == 2)
+                        gameMessage.setString("DIFFICULTY 2 - CBIRD UNLOCKED | SPEED +10%");
+                    else if (level == 3)
+                        gameMessage.setString("DIFFICULTY 3 - CWHALE UNLOCKED | SPEED +10%");
+                    else if (level == INFINITE_RIVER_START_DIFFICULTY)
+                        gameMessage.setString("DIFFICULTY 10 - RIVER UNLOCKED | SPEED +10%");
+                    else
+                        gameMessage.setString(
+                            "DIFFICULTY " + std::to_string(level) + " | +1 OBSTACLE | SPEED +10%");
+                    showMessage = true;
+                    messageClock.restart();
+                }
+            }
+
+            // Classic speed is fixed by LevelConfig for the entire selected level.
+
+            // IMPORTANT: do NOT delete/convert lanes merely because the player has
+            // walked past them.  Hazard/safe status is fixed from the start of the
+            // run.  The camera-based cleanup farther below is still kept.
+
+            bool playerWasHit = false;
+
+            for (auto& lane : vehicleLanes)
+            {
+                lane.updateTrafficLight(logicWorker.logicTicks());
+                lane.update(WINDOW_WIDTH);
+                if (!playerWasHit && lane.checkCollision(player.getBounds()))
+                {
+                    handlePlayerHit(false, 0.f);
+                    playerWasHit = true;
+                }
+            }
+
+            for (auto& lane : animalLanes)
+            {
+                lane.update(WINDOW_WIDTH);
+                if (!playerWasHit && lane.checkCollision(player.getBounds()))
+                {
+                    handlePlayerHit(false, 0.f);
+                    playerWasHit = true;
+                }
+            }
+
+            // Water mechanics: water is placed only on HAZARD bands, never on SAFE bands. A player inside water must stand on a log.
+            for (auto& lane : waterLanes)
+            {
+                lane.update(WINDOW_WIDTH);
+
+                if (playerWasHit || !lane.isPlayerTouchingWater(player.getBounds()))
+                    continue;
+
+                const auto support = lane.supportSpeed(player.getBounds());
+                if (support)
+                {
+                    player.setPosition({ player.getPosition().x + *support, player.getPosition().y });
+                    lastSupportedWaterLaneY = lane.getY();
+
+                    // Falling off the SCREEN edge is lethal only while riding a log.
+                    // Road/safe lanes continue to use normal horizontal clamping.
+                    const sf::FloatRect bounds = player.getBounds();
+                    const float right = bounds.position.x + bounds.size.x;
+                    if (bounds.position.x < 0.f || right > WINDOW_WIDTH)
+                    {
+                        handlePlayerHit(true, lane.getY());
+                        playerWasHit = true;
+                    }
+                }
+                else
+                {
+                    // Only actual WATER contact without a supporting log is lethal.
+                    // The green strip between river groups is outside this water band.
+                    handlePlayerHit(true, lane.getY());
+                    playerWasHit = true;
+                }
+            }
+
+            if (trainHazard)
+            {
+                trainHazard->update();
+                if (!playerWasHit && trainHazard->checkCollision(player.getBounds()))
+                {
+                    handlePlayerHit(false, 0.f);
+                    playerWasHit = true;
+                }
+            }
+
+            if (pendingInfiniteResetAfterGameOver)
+            {
+                // Final-life Game Over: now that no lane iterator is active, reset
+                // the slot/world to score 0, difficulty 1 and canonical origin.
+                resetInfiniteGameplayState(true);
+                pendingInfiniteResetAfterGameOver = false;
+                break;
+            }
+
+            // Update checkpoint only in a green SAFE band. This makes the
+            // resting zones meaningful and prevents reset-to-bottom after long progress.
+            if (!playerWasHit && isSafeBandY(player.getPosition().y))
+            {
+                const sf::Vector2f checkpoint = player.getCheckpoint();
+                if (player.getPosition().y < checkpoint.y - 20.f)
+                    player.setCheckpoint(player.getPosition());
+            }
+
+            if (playerMovementLocked &&
+                movementLockClock.getElapsedTime().asSeconds() >= minimumReadyTime &&
+                allObstaclesAreVisible())
+            {
+                playerMovementLocked = false;
+            }
+
+            float cameraTop = camera.getCenter().y - WINDOW_HEIGHT / 2.f;
+            float cameraBottom = camera.getCenter().y + WINDOW_HEIGHT / 2.f;
+
+            if (gameMode == GameMode::Endless)
+            {
+                // Generate only HAZARD rows; every row between them is a SAFE lane.
+                while (nextLaneY > cameraTop - 260.f)
+                {
+                    spawnEndlessLane(nextLaneY);
+                    nextLaneY = previousHazardLaneY(nextLaneY);
+                }
+
+                vehicleLanes.erase(
+                    std::remove_if(vehicleLanes.begin(), vehicleLanes.end(),
+                        [cameraBottom](const CLANE& lane)
+                        {
+                            return lane.getY() > cameraBottom + 180.f;
+                        }),
+                    vehicleLanes.end());
+
+                animalLanes.erase(
+                    std::remove_if(animalLanes.begin(), animalLanes.end(),
+                        [cameraBottom](const CANIMALLANE& lane) { return lane.getY() > cameraBottom + 180.f; }),
+                    animalLanes.end());
+                waterLanes.erase(
+                    std::remove_if(waterLanes.begin(), waterLanes.end(),
+                        [cameraBottom](const CWaterLane& lane) { return lane.getY() > cameraBottom + 180.f; }),
+                    waterLanes.end());
+                riverSafeLandYs.erase(
+                    std::remove_if(riverSafeLandYs.begin(), riverSafeLandYs.end(),
+                        [cameraBottom](float y) { return y > cameraBottom + 180.f; }),
+                    riverSafeLandYs.end());
+
+                // Once an Infinite train lane is far behind the camera, remove it
+                // so a later difficulty segment can generate another train lane.
+                if (trainHazard && trainHazard->getY() > cameraBottom + 180.f)
+                    trainHazard.reset();
+            }
+            else
+            {
+                const LevelConfig& config = GetLevelConfig(currentStage);
+                while (nextLaneY > cameraTop - 260.f)
+                {
+                    spawnClassicLane(nextLaneY, config, classicLaneSequenceIndex++);
+                    nextLaneY = previousHazardLaneY(nextLaneY);
+                }
+
+                // CLASSIC V8: 10 separate levels, fixed difficulty per level.
+                // No internal speed stages. Reaching 1000 points completes ONLY
+                // the selected level and unlocks the next one.
+                if (score >= CLASSIC_LEVEL_SCORE_TARGET)
+                {
+                    score = CLASSIC_LEVEL_SCORE_TARGET;
+                    currentProfile.highScore = std::max(currentProfile.highScore, score);
+                    currentProfile.classicCompletedLevels = std::max(
+                        currentProfile.classicCompletedLevels, currentStage);
+                    if (currentStage < 10)
+                        currentProfile.unlockedClassicLevel = std::max(
+                            currentProfile.unlockedClassicLevel, currentStage + 1);
+                    else
+                        currentProfile.unlockedClassicLevel = 10;
+
+                    LeaderboardManager::recordClassicProgress(
+                        currentProfile.playerName,
+                        currentProfile.playerId,
+                        currentProfile.classicCompletedLevels);
+
+                    campaignComplete = true;
+                    playerMovementLocked = true;
+                    state = CGAME::Victory;
+                    sounds.playWin();
+                    gameMessage.setString(
+                        "LEVEL " + std::to_string(currentStage) + " COMPLETE! NEXT LEVEL UNLOCKED");
+                    showMessage = true;
+                    messageClock.restart();
+                    saveActiveSlot();
+                }
+            }
+
+            // Auto-save current score/progression. Classic has no internal speed stage in V8.
+            if (activeSlot >= 0 &&
+                (score != lastAutoSavedScore ||
+                 currentStage != lastAutoSavedStage))
+            {
+                saveActiveSlot();
+            }
+
+            // Keep player inside horizontal viewport and slightly above camera bottom.
+            player.keepInBounds(WINDOW_WIDTH, camera.getCenter().y + 330.f);
+            break;
+        }
+
+        case CGAME::Paused:
+            break;
+
+        default:
+            break;
+        }
+
+        // ===== HUD =====
+        if (gameMode == GameMode::Endless)
+        {
+            levelText.setString(
+                "Mode: INFINITE\nDifficulty: " + std::to_string(level) +
+                "\nScore: " + std::to_string(score) +
+                "\nNext difficulty: " + std::to_string((difficultyTier + 1) * INFINITE_DIFFICULTY_SCORE_STEP) +
+                "\nLives: " + std::to_string(lives));
+        }
+        else
+        {
+            const LevelConfig& config = GetLevelConfig(currentStage);
+            levelText.setString(
+                "Mode: CLASSIC\nLevel: " + std::to_string(currentStage) + "/10 - " + config.title +
+                "\nScore: " + std::to_string(score) + " / " + std::to_string(CLASSIC_LEVEL_SCORE_TARGET) +
+                "\nONE LIFE");
+        }
+
+        // Camera follows only upward movement.
+        const float targetCameraY = player.getPosition().y - 100.f;
+        if (targetCameraY < maxCameraY)
+            maxCameraY = targetCameraY;
+        camera.setCenter({ WINDOW_WIDTH / 2.f, maxCameraY });
+
+        window.clear();
+
+        switch (state)
+        {
+        case CGAME::Menu:
+        {
+            window.setView(window.getDefaultView());
+            menu.drawMenu(window);
+            break;
+        }
+
+        case CGAME::Playing:
+        case CGAME::Paused:
+        case CGAME::GameOver:
+        case CGAME::Victory:
+        {
+            window.setView(camera);
+            drawSimpleLaneMap(window, camera);
+
+            // Safe strips between river groups use the same VineLane artwork as
+            // every other safe lane so the visual language stays consistent.
+            for (float landY : riverSafeLandYs)
+                drawLaneTexture(window, safeTextureForY(landY), landY + 1.f, SAFE_LAND_HEIGHT);
+
+            for (const auto& lane : vehicleLanes)
+            {
+                lane.draw(window);
+                lane.drawTrafficLight(window);
+                if (showDebugHitboxes) lane.drawDebug(window);
+            }
+            for (const auto& lane : animalLanes)
+            {
+                lane.draw(window);
+                if (showDebugHitboxes) lane.drawDebug(window);
+            }
+            for (const auto& lane : waterLanes)
+            {
+                lane.draw(window);
+                if (showDebugHitboxes) lane.drawDebug(window);
+            }
+            if (trainHazard) trainHazard->draw(window);
+
+            player.draw(window);
+            if (showDebugHitboxes) player.drawDebug(window);
+
+            window.setView(window.getDefaultView());
+
+            // Short damage flash: visual collision feedback similar to the reference projects.
+            // It uses the same invulnerability timer, so no extra gameplay state is required.
+            if (invulnerable && hitClock.getElapsedTime().asSeconds() < 0.16f)
+            {
+                sf::RectangleShape damageFlash({ WINDOW_WIDTH, WINDOW_HEIGHT });
+                damageFlash.setFillColor(sf::Color(210, 38, 38, 72));
+                window.draw(damageFlash);
+            }
+
+            window.draw(levelText);
+
+            if (showMessage && state != CGAME::Victory)
+            {
+                // WELCOME and SKIN notifications are centered across the HUD row.
+                const std::string messageAnsi = gameMessage.getString().toAnsiString();
+                const bool centerHudMessage =
+                    messageAnsi.rfind("WELCOME ", 0) == 0 ||
+                    messageAnsi.rfind("SKIN: ", 0) == 0;
+                if (centerHudMessage)
+                {
+                    sf::Text centeredHudMessage = gameMessage;
+                    const auto bounds = centeredHudMessage.getLocalBounds();
+                    centeredHudMessage.setOrigin({
+                        bounds.position.x + bounds.size.x / 2.f,
+                        bounds.position.y + bounds.size.y / 2.f
+                    });
+                    centeredHudMessage.setPosition({ 640.f, 38.f });
+                    window.draw(centeredHudMessage);
+                }
+                else
+                {
+                    window.draw(gameMessage);
+                }
+
+                if (messageClock.getElapsedTime().asSeconds() > 2.2f && !campaignComplete)
+                    showMessage = false;
+            }
+
+            if (state == CGAME::Playing)
+            {
+                pauseMenu.drawPauseButton(window);
+
+                if (playerMovementLocked && !campaignComplete)
+                {
+                    sf::RectangleShape readyBackdrop({ 760.f, 66.f });
+                    readyBackdrop.setPosition({ 260.f, 615.f });
+                    readyBackdrop.setFillColor(sf::Color(12, 39, 68, 205));
+                    readyBackdrop.setOutlineColor(sf::Color(112, 158, 79));
+                    readyBackdrop.setOutlineThickness(3.f);
+                    window.draw(readyBackdrop);
+                    window.draw(notifyText);
+                }
+
+                if (trainHazard && trainHazard->isWarning())
+                {
+                    sf::Text warningText(font);
+                    warningText.setString("WARNING: TRAIN INCOMING!");
+                    warningText.setCharacterSize(28);
+                    warningText.setFillColor(sf::Color(255, 210, 70));
+                    warningText.setOutlineColor(sf::Color(120, 20, 20));
+                    warningText.setOutlineThickness(3.f);
+                    const auto bounds = warningText.getLocalBounds();
+                    warningText.setOrigin({
+                        bounds.position.x + bounds.size.x / 2.f,
+                        bounds.position.y + bounds.size.y / 2.f
+                    });
+                    warningText.setPosition({ 640.f, 110.f });
+                    window.draw(warningText);
+                }
+            }
+            else if (state == CGAME::Paused)
+            {
+                pauseMenu.draw(window, backgroundMusic.getVolume());
+            }
+            else if (state == CGAME::GameOver)
+            {
+                sf::RectangleShape overlay({ WINDOW_WIDTH, WINDOW_HEIGHT });
+                overlay.setFillColor(sf::Color(8, 10, 14, 205));
+                window.draw(overlay);
+
+                sf::Text title(font);
+                title.setString("GAME OVER");
+                title.setCharacterSize(54);
+                title.setFillColor(sf::Color(244, 92, 92));
+                auto b = title.getLocalBounds();
+                title.setOrigin({ b.position.x + b.size.x / 2.f, b.position.y + b.size.y / 2.f });
+                title.setPosition({ 640.f, 300.f });
+                window.draw(title);
+
+                sf::Text result(font);
+                result.setString(gameOverNewHighScore
+                    ? "NEW HIGH SCORE!  " + std::to_string(gameOverScore)
+                    : "SCORE: " + std::to_string(gameOverScore));
+                result.setCharacterSize(gameOverNewHighScore ? 32 : 27);
+                result.setFillColor(gameOverNewHighScore ? sf::Color(244, 190, 72) : sf::Color::White);
+                b = result.getLocalBounds();
+                result.setOrigin({ b.position.x + b.size.x / 2.f, b.position.y + b.size.y / 2.f });
+                result.setPosition({ 640.f, 370.f });
+                window.draw(result);
+
+                sf::Text hint(font);
+                hint.setString(gameMode == GameMode::Level
+                    ? "ENTER: Level Select     ESC: Main Menu"
+                    : "ENTER: Play Again (fresh run)     ESC: Main Menu");
+                hint.setCharacterSize(21);
+                hint.setFillColor(sf::Color(205, 214, 224));
+                b = hint.getLocalBounds();
+                hint.setOrigin({ b.position.x + b.size.x / 2.f, b.position.y + b.size.y / 2.f });
+                hint.setPosition({ 640.f, 425.f });
+                window.draw(hint);
+            }
+            else if (state == CGAME::Victory)
+            {
+                sf::RectangleShape overlay({ WINDOW_WIDTH, WINDOW_HEIGHT });
+                overlay.setFillColor(sf::Color(4, 12, 24, 220));
+                window.draw(overlay);
+
+                sf::Text title(font);
+                title.setString(currentStage == 10
+                    ? "CLASSIC COMPLETE - ALL 10 LEVELS!"
+                    : "LEVEL " + std::to_string(currentStage) + " COMPLETE!");
+                title.setCharacterSize(44);
+                title.setFillColor(sf::Color(242, 184, 74));
+                auto b = title.getLocalBounds();
+                title.setOrigin({ b.position.x + b.size.x / 2.f, b.position.y + b.size.y / 2.f });
+                title.setPosition({ 640.f, 310.f });
+                window.draw(title);
+
+                sf::Text hint(font);
+                hint.setString(currentStage == 10
+                    ? "ENTER: Level Select     ESC: Main Menu"
+                    : "Next level unlocked!  ENTER: Level Select");
+                hint.setCharacterSize(25);
+                hint.setFillColor(sf::Color::White);
+                b = hint.getLocalBounds();
+                hint.setOrigin({ b.position.x + b.size.x / 2.f, b.position.y + b.size.y / 2.f });
+                hint.setPosition({ 640.f, 385.f });
+                window.draw(hint);
+            }
+
+            break;
+        }
+
+        default:
+            break;
+        }
+
+        window.display();
+    }
+
+    return 0;
+}

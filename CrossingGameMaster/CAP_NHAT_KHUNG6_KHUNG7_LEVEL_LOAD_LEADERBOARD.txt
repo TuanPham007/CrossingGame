@@ -1,0 +1,15 @@
+CAP NHAT UI MENU MOI
+
+1. Classic Level Select:
+- Doi khung sang Khung (6).png.
+- Day cac nut Level xuong thap hon de khong dinh phan vien tren.
+
+2. Load Game:
+- Doi khung sang Khung (7).png.
+- Thu nho save-slot button, day xuong duoi nhe.
+- Chinh lai text trong save-slot ro hon, tach dong ten va thong tin ID/diem.
+
+3. Leaderboard:
+- Doi khung bang xep hang sang Khung (4).png.
+- Thu ngan cac row xep hang de giam meo/crack do stretch.
+- Day cac row xep hang xuong duoi mot chut.

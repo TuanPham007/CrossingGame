@@ -1,0 +1,28 @@
+CAP NHAT DO HOA - VINE LANE 4 / CLOUD LANE 2 / RIVER 2 / BOAT
+
+ASSET DANG DUOC CODE LOAD:
+- VineLane4.png : safe lane
+- CloudLane2.png: obstacle lane
+- River2.png    : water lane visual
+- Boat.png      : moving water platform visual (thay Log.png)
+
+NGUYEN TAC RENDER:
+1. Vine/Cloud/River KHONG stretch ngang 1280px.
+2. Texture giu ti le goc, lap ngang bang nhieu sprite.
+3. Sprite ke tiep duoc mirror theo truc X: NORMAL -> MIRROR -> NORMAL -> MIRROR.
+   Nhu vay seam ghep right-right / left-left cua cung mot asset, giam lo duong noi.
+4. Cac tile overlap 5-6px de tranh crack 1px.
+5. Boat khong lap; moi collision platform co 1 Boat sprite.
+6. Gameplay background = sky blue (135, 206, 235).
+
+KICH THUOC VISUAL:
+- Safe Vine: 104px cao
+- Obstacle Cloud: 96px cao
+- River: 100px cao
+- River-safe Vine: 100px cao
+- Boat: 90px cao, width = logWidth + 46px
+
+GAMEPLAY KHONG DOI:
+- Lane center step = 100px
+- Water lethal hitbox van WaterHeight = 50px
+- Boat van dung collision platform RectangleShape cu (logs vector), chi doi visual.

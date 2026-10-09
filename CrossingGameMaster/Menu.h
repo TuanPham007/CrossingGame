@@ -1,0 +1,142 @@
+#pragma once
+
+#include <SFML/Graphics.hpp>
+#include <SFML/System.hpp>
+#include "CGAME.h"
+#include "SaveData.h"
+
+#include <array>
+#include <optional>
+#include <string>
+
+class Menu
+{
+private:
+    enum class Screen
+    {
+        Main,
+        NewChooseMode,
+        NewEnterName,
+        NewEnterId,
+        Load,
+        ClassicLevelSelect,
+        Leaderboard
+    };
+
+    sf::Texture splashTexture;
+    std::optional<sf::Sprite> splashSprite;
+    sf::Texture menuBackgroundTexture;
+    std::optional<sf::Sprite> menuBackgroundSprite;
+
+    // Fantasy wood UI skin. The transparent margins are cropped in the bundled
+    // PNGs so these textures can be stretched directly to their hitboxes.
+    sf::Texture frameMainTexture;   // Khung (1).png
+    sf::Texture frameLevelTexture;       // Khung (6).png
+    sf::Texture frameWideTexture;        // Khung (3).png
+    sf::Texture frameLoadTexture;        // Khung (6).png
+    sf::Texture frameLeaderboardTexture; // Khung (4).png
+    sf::Texture button1Texture;
+    sf::Texture button2Texture;
+    sf::Texture button3Texture;
+    sf::Texture slotTexture;          // Slot.png
+    sf::Texture crossingGameTexture;  // CrossingGame.png
+    bool menuSkinLoaded = false;
+
+    sf::Font font;
+
+    Screen screen = Screen::Main;
+    int selectedMain = 0;
+
+    // "Slide down from the top" entry animation, replayed whenever the menu
+    // screen changes (mode select, load, leaderboard, ...) or the menu is
+    // (re)shown after gameplay.
+    sf::Clock entryAnimClock;
+    Screen lastAnimatedScreen = Screen::Main;
+    bool entryAnimPending = true;
+
+    bool startGame = false;
+    bool loadGame = false;
+
+    // Save mapping is intentionally compatible with previous builds:
+    // 0 = Infinite Mode, 1 = Classic Mode (10 unlockable levels).
+    int selectedGameMode = 1;
+    sf::String inputName;
+    sf::String inputId;
+    sf::String inputError;
+
+    SaveData requestedSave;
+    int requestedSlot = -1;
+
+    sf::FloatRect newGameRect;
+    sf::FloatRect loadGameRect;
+    sf::FloatRect leaderboardRect;
+    sf::FloatRect exitRect;
+
+    sf::FloatRect classicModeRect;
+    sf::FloatRect infiniteModeRect;
+    sf::FloatRect inputFieldRect;
+    sf::FloatRect startRect;
+    sf::FloatRect backRect;
+
+    std::array<sf::FloatRect, 10> slotRects;
+    std::array<sf::FloatRect, 10> slotDeleteRects;
+    std::array<sf::FloatRect, 10> classicLevelRects;
+    std::array<SaveData, 10> slotData;
+    std::array<bool, 10> slotUsed{};
+
+    void refreshSlots();
+    int findEmptySlot() const;
+
+    void openNewGame();
+    void openLoadGame();
+    void openLeaderboard();
+    void createNewProfileAndStart(CGAME& state);
+
+    void drawMain(sf::RenderWindow& window);
+    void drawNewChooseMode(sf::RenderWindow& window);
+    void drawNewEnterName(sf::RenderWindow& window);
+    void drawNewEnterId(sf::RenderWindow& window);
+    void drawLoadScreen(sf::RenderWindow& window);
+    void drawClassicLevelSelect(sf::RenderWindow& window);
+    void drawLeaderboard(sf::RenderWindow& window);
+
+    void handleMainEvent(sf::RenderWindow& window, const sf::Event& event);
+    void handleNewChooseModeEvent(sf::RenderWindow& window, const sf::Event& event);
+    void handleNewEnterNameEvent(const sf::Event& event);
+    void handleNewEnterIdEvent(sf::RenderWindow& window, const sf::Event& event, CGAME& state);
+    void handleLoadEvent(sf::RenderWindow& window, const sf::Event& event, CGAME& state);
+    void handleClassicLevelSelectEvent(sf::RenderWindow& window, const sf::Event& event, CGAME& state);
+    void handleLeaderboardEvent(sf::RenderWindow& window, const sf::Event& event);
+
+public:
+    Menu();
+
+    bool load();
+    void update();
+
+    void handleEvent(
+        sf::RenderWindow& window,
+        const sf::Event& event,
+        CGAME& state);
+
+    void drawSplash(sf::RenderWindow& window);
+    void drawMenu(sf::RenderWindow& window);
+
+    // Restarts the slide-down entry animation the next time drawMenu() runs.
+    // Call this whenever gameplay hands control back to the menu.
+    void resetEntryAnimation();
+
+    bool isStartGame() const;
+    void resetStartFlag();
+
+    bool isLoadGame() const;
+    void resetLoadFlag();
+
+    const SaveData& getRequestedSave() const;
+    int getRequestedSlot() const;
+
+    // Opens the Classic level selector for an existing/new profile.
+    void showClassicLevelSelect(const SaveData& save, int slotIndex);
+
+    static std::string getSlotPath(int slotIndex);
+};

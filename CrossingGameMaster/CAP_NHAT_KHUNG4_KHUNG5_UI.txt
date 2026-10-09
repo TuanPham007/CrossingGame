@@ -1,0 +1,17 @@
+CAP NHAT UI - KHUNG (4) VA KHUNG (5)
+
+1. PauseMenu
+- PauseMenu.cpp load Khung (4).png thay cho Khung (1).png.
+- Khung pause: position (350,62), size 580x590.
+- Resume / Settings / Main Menu: 400x66, can giua va nam gon trong khung.
+- Settings controls duoc dich lai de nam trong vung go cua Khung (4).
+- Button van dung Button1.png.
+
+2. Classic Level Select
+- Menu.cpp load Khung (5).png thay cho Khung (2).png.
+- Panel: (115,120), size 1050x585.
+- 10 level button: 5 cot x 2 hang, moi nut 150x84.
+- Vi tri dau: x=205, y=258; buoc ngang 174, buoc doc 118.
+- Font LEVEL giam 18, status 12 de khong tran nut.
+- Back to Menu: 250x48.
+- Button van dung Button3.png.

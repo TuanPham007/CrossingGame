@@ -1,0 +1,55 @@
+CROSSING GAME - V7 UPDATE
+=========================
+
+1. LOAD GAME - DELETE SLOT
+- Load Game now shows an X button on every occupied save card.
+- Clicking X deletes SaveGame/slotN.txt and refreshes the list immediately.
+
+2. CLASSIC MODE
+- 10 independent Levels, NOT 10x10 internal speed stages anymore.
+- New Classic profile -> Level Select.
+- Load Classic profile -> Level Select.
+- Level 1 is initially unlocked.
+- Complete 1000 points in Level N -> unlock Level N+1.
+- Choosing/replaying any unlocked level always starts fresh:
+  score=0, one life, player at original start, fresh map seed.
+- Classic has ONE LIFE. First collision -> GAME OVER.
+- Game Over shows NEW HIGH SCORE if the run beats leaderboard Top 1;
+  otherwise it shows the run score.
+- Speed/object quantity is fixed by LevelConfig.h for the entire level.
+- No score-based/stage-based Classic speed multiplier remains.
+- River log edge rule: while supported by a log, if the player hitbox is
+  carried outside x=0..1280, the player dies. Road/safe lanes still clamp normally.
+
+3. INFINITE MODE
+- Keeps 3 lives (unchanged because the request changed one-life explicitly for Classic).
+- Final death -> GAME OVER + NEW HIGH SCORE or SCORE.
+- ENTER after Game Over starts a completely fresh run in the same slot:
+  score=0, difficulty=1, 3 lives, start position, new map seed/world.
+- Name/ID and highScore are preserved as profile/leaderboard metadata.
+- ESC to Main Menu also stores the slot in fresh-run state.
+
+4. LEADERBOARD / SAVE V7
+- Save format: CROSSING_SAVE_V7.
+- Added highScore separate from current score.
+- Added unlockedClassicLevel.
+- Added lane-local traffic-light state to world snapshots.
+- V2-V6 saves are still readable.
+
+5. LANE-LOCAL TRAFFIC LIGHTS
+- CLANE owns zero or one CTrafficLight (composition).
+- Only some CCAR lanes receive a light.
+- Every light has a different phase offset.
+- RED stops only the cars in that exact CLANE.
+- CBIRD/CWHALE/other car lanes are not controlled by that light.
+
+6. MAIN FILES TO EDIT LATER
+- Level difficulty: LevelConfig.h
+- Classic/Infinite runtime: main.cpp
+- Level Select / Delete Slot UI: Menu.cpp, Menu.h
+- Lane-specific traffic: CLANE.cpp/.h, CTrafficLight.cpp/.h
+- Save format: SaveData.h, CSAVEGAME.cpp
+
+NOTE
+- Gameplay still uses the simple repeating SAFE/HAZARD background from the previous build.
+- This update intentionally does not redesign visual background assets.

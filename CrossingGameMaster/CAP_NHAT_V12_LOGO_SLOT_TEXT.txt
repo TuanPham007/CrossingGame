@@ -1,0 +1,11 @@
+CAP NHAT V12 - LOGO + SLOT TEXT
+
+1. Main Menu:
+- CrossingGame.png thu nho nhe tu 560x256 con 504x230, giu dung ti le.
+
+2. Load Game Slot:
+- SLOT 01..10 duoc can giua trong o nho goc tren-ben-trai cua Slot.png.
+- Vung bang go lon can giua cac thong tin:
+  NAME: <ten>
+  ID: <id> | LEVEL: <level> | SCORE: <score>
+- EMPTY cung duoc can giua trong vung bang go lon.

@@ -1,0 +1,24 @@
+﻿  main.cpp
+  Menu.cpp
+C:\Users\pmtua\Downloads\CrossingGame (1)\CrossingGame\CrossingGameMaster\Menu.cpp(173,29): warning C4834: discarding return value of function with [[nodiscard]] attribute
+C:\Users\pmtua\Downloads\CrossingGame (1)\CrossingGame\CrossingGameMaster\Menu.cpp(174,37): warning C4834: discarding return value of function with [[nodiscard]] attribute
+  Generating Code...
+  CPEOPLE.cpp
+  CVEHICLE.cpp
+  CCAR.cpp
+  CBIRD.cpp
+  CLANE.cpp
+  PauseMenu.cpp
+  CWHALE.cpp
+  CANIMAL.cpp
+  CANIMALLANE.cpp
+  CSAVEGAME.cpp
+  CWaterLane.cpp
+  CTRAIN.cpp
+  CTrafficLight.cpp
+  GameLogicWorker.cpp
+  SoundManager.cpp
+  AssetManager.cpp
+  LeaderboardManager.cpp
+  Generating Code...
+  CrossingGameMaster.vcxproj -> C:\Users\pmtua\Downloads\CrossingGame (1)\CrossingGame\x64\Debug\CrossingGameMaster.exe

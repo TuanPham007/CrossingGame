@@ -1,0 +1,32 @@
+CAP NHAT MENU + CTRAIN
+======================
+1. CTRAIN
+- Moi chu ky random 2-5 toa.
+- Thoi gian tau chay qua man hinh random 1.45-3.20 giay.
+- Tau co luc nhanh, co luc cham de nhin ro dau tau/toa tau.
+
+2. WELCOME
+- Dong WELCOME o gameplay duoc can giua theo truc X tai x=640.
+- Cac thong bao gameplay khac van giu can le cu.
+
+3. MAIN MENU
+- Khung chinh: Khung (1).png
+- Nut NEW GAME / LOAD GAME / LEADERBOARD / EXIT: Button1.png
+- Main panel thu nho so voi ban truoc.
+- CROSSING GAME tang size len 64.
+
+4. NEW GAME / INPUT / LOAD / LEADERBOARD
+- Chon mode: Khung (3).png + Button2.png.
+- Nhap Name/ID: Khung (3).png.
+- BACK/NEXT/START/LEVEL SELECT/BACK TO MENU: Button1.png.
+- Load Game: Khung (3).png; moi save slot dung Button1.png.
+- Leaderboard: Khung (3).png; moi dong xep hang dung Button1.png.
+
+5. LEVEL SELECT
+- Khung: Khung (2).png.
+- Level buttons: Button3.png.
+
+6. MAU CHU BUTTON
+- Binh thuong: trang.
+- Hover / selected: xanh la.
+- Disabled / locked: xam.

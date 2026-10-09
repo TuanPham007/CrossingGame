@@ -1,0 +1,36 @@
+CROSSING GAME V8 - CLASSIC RESET / INFINITE RUN LEADERBOARD
+============================================================
+
+1) CLASSIC CANONICAL RESET
+- All 10 Classic levels use the same coordinate origin as Level 1:
+  Player start = (615, 610), camera center Y = 360, first hazard center Y = 510.
+- Every time a Classic level is selected/replayed:
+  score = 0, lives = 1, player/camera/checkpoint reset, all lanes are cleared and rebuilt.
+- Each level has a deterministic seed, so replaying the SAME level returns the same initial object layout.
+- Difficulty differences remain in LevelConfig.h (speed, object count/type, river/train rules).
+
+2) SAFE LANES BEHIND PLAYER
+- Hazard lanes already passed by the player are removed.
+- Procedural map also renders all bands below/behind the player as safe green lanes.
+- Therefore obstacles exist only ahead of/currently around the player, not below them.
+
+3) INFINITE GAME OVER RESET
+- The final run score is copied to gameOverScore and recorded in leaderboard_infinite.txt.
+- Then the active slot is immediately reset to:
+  score=0, difficulty=1, lives=3, canonical player/camera position, fresh map/world seed.
+- Pressing ENTER from GAME OVER starts that already-reset run.
+
+4) GAME OVER AUDIO
+- lose.wav stops immediately when leaving the GAME OVER overlay (ENTER/SPACE/ESC).
+
+5) TWO SEPARATE LEADERBOARDS
+- CLASSIC: SaveGame/leaderboard_classic.txt
+  Ranking key = number of completed Classic levels (0..10). One best progress record per Name+ID.
+- INFINITE: SaveGame/leaderboard_infinite.txt
+  Ranking key = score of an individual completed run. Every run is a separate record.
+  It is NOT calculated from slot highScore values.
+- NEW HIGH SCORE in Infinite compares the finished run with the previous Top 1 BEFORE recording it.
+
+6) SAVE FORMAT
+- New slot save format: CROSSING_SAVE_V8.
+- V7/V6/V5/V4/V3/V2 saves are still accepted.

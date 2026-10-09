@@ -1,0 +1,6 @@
+Player's name: tuan
+ID: 008
+Class: fuck
+Level: 1
+Score: 0
+Position: 36,26

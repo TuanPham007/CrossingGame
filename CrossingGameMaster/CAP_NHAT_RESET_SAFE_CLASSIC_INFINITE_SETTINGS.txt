@@ -1,0 +1,36 @@
+CAP NHAT: SAFE LANE + CLASSIC HARD RESET + INFINITE ENTER RESET + SETTINGS
+==========================================================================
+
+1) SAFE LANE CHI CO DINH LUC VAO/RESET
+File: main.cpp
+- Khoang dong 276-284: drawSimpleLaneMap dung PLAYER_START_Y, KHONG dung player.getPosition().y.
+- Khoang dong 1307: da bo block behindThresholdY xoa vehicle/animal/water/train khi player vua di qua.
+- Cleanup theo camera van giu nguyen de toi uu bo nho.
+
+2) CLASSIC HARD RESET MOI KHI VAO/CHOI LAI LEVEL
+File: main.cpp
+- Khoang dong 531-590: buildLevelStage().
+- Reset score=0, lives=1, player/checkpoint=(615,610), camera origin=360,
+  clear lanes/river/train/snapshot, reset collision/timer/sequence, sau do moi build map.
+- Classic dung deterministic seed cua tung level, nen choi lai cung level co bo cuc khoi dau on dinh.
+- Khoang dong 1222-1230: reset sf::View camera that ve INITIAL_CAMERA_Y.
+
+3) INFINITE GAME OVER -> ENTER LUON VE GOC
+File: main.cpp
+- Khoang dong 829-895: resetInfiniteGameplayState().
+- KHONG goi reseedForNewGame() khi respawn sau Game Over.
+- Dung lai worldSeed cua slot/run, score=0, difficulty=1, lives=3,
+  player/checkpoint=(615,610), camera=360, xoa world cu va bootstrap map tu dau.
+- Khoang dong 1078-1105: khi bam Enter/Space, reset lai mot lan nua va ep sf::View camera ve goc.
+
+4) SETTINGS
+File: PauseMenu.cpp
+- Khoang dong 45-49: nut +/- BGM/SFX con 90x54.
+- Khoang dong 87-100: font +/- con size 36.
+- Khoang dong 726: da bo drawSpeakerIcon tren nut MUTE BGM.
+
+TOA DO GOC
+- PLAYER_START_X = 615
+- PLAYER_START_Y = 610
+- INITIAL_CAMERA_Y = 360
+- FIRST_HAZARD_Y = 510

@@ -1,0 +1,10 @@
+CAP NHAT V13
+
+1. Save-slot info dung 1 dong:
+NAME: <Ten> | ID: <ID> | LEVEL: <Man> | SCORE: <Diem>
+
+2. Tang co chu thong tin slot tu 10 len 12; SLOT label tu 10 len 11.
+Neu chu qua dai, code chi co nhe truc X de van giu co chu doc ro.
+
+3. Thong bao Name/ID chua nhap doi sang do dam RGB(178,32,42),
+co outline kem nhe de noi bat tren khung go.

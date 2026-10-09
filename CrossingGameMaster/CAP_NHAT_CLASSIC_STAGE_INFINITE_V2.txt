@@ -1,0 +1,53 @@
+CAP NHAT CLASSIC / INFINITE - 13-08-2026
+
+1) CLASSIC MODE
+- 10 LEVEL, moi LEVEL co 10 STAGE.
+- Moi 100 diem: tang 1 STAGE, KHONG reset map/player.
+- Moi LEVEL can 1000 diem. Khi dat 1000:
+  + sang LEVEL tiep theo;
+  + score reset ve 0;
+  + stage reset ve 1;
+  + lives reset ve 3;
+  + player/camera/map reset ve diem xuat phat ban dau.
+- Speed tang theo stage:
+  LEVEL 1: +1% moi stage
+  ...
+  LEVEL 10: +10% moi stage
+  (tinh tu base speed cua LEVEL do, dang tuyen tinh.)
+- Cau hinh 10 LEVEL bam theo Excel:
+  LEVEL 1-5 road; LEVEL 6 water; LEVEL 7 deep river;
+  LEVEL 8 mixed; LEVEL 9 dense road; LEVEL 10 chaos/train.
+- Khi het 3 mang:
+  + phuc hoi 3 mang;
+  + giu score/stage/level;
+  + va cham thuong: ve vi tri xuat phat;
+  + chet o nuoc: ve safe land gan nhat, tranh spawn vao nuoc.
+
+2) INFINITE MODE
+- Difficulty tang moi 200 diem.
+- Difficulty 1: CCAR.
+- Difficulty 2: them CBIRD.
+- Difficulty 3: them CWHALE.
+- Tu do 3 loai duoc tron luan phien; moi difficulty tang them obstacle (co gioi han).
+- River chi duoc unlock tu Difficulty 10. Cum river dau tien duoc dam bao xuat hien;
+  cac cum sau xen ke ngau nhien voi road/cloud lanes.
+- Khi het 3 mang:
+  + score = 0;
+  + lives = 3;
+  + difficulty = 1;
+  + speed cac lane hien tai dua ve he so ban dau;
+  + KHONG teleport them player, giu cach respawn binh thuong cua lan va cham do.
+
+3) NEW GAME / SAVE
+- Moi NEW GAME reseed RNG + clear tat ca world lanes/sequence de khong tai su dung bo cuc slot truoc.
+- Save format moi: CROSSING_SAVE_V5.
+- Luu them classicStage.
+- Van doc duoc save V4/V3/V2/legacy; Classic cu duoc chuyen sang score 0..999/stage moi.
+
+FILE CHINH DA SUA
+- main.cpp
+- LevelConfig.h
+- SaveData.h
+- CSAVEGAME.cpp
+- Menu.cpp
+- Menu.h

@@ -1,0 +1,17 @@
+CAP NHAT PAUSE + LEADERBOARD UI
+
+1. PauseMenu
+- Khung pause: Khung (1).png
+- Tat ca nut trong Pause/Settings: Button1.png
+- Pause button trong gameplay: PauseButton.png
+- Kich thuoc/hitbox duoc can lai de nam gon trong khung.
+- Chu nut: trang binh thuong, xanh la khi hover/selected.
+
+2. Leaderboard
+- Classic va Infinite duoc tach thanh hai board rieng biet.
+- Moi board co khung rieng va 5 hang xep hang rieng.
+
+Files chinh:
+- PauseMenu.h
+- PauseMenu.cpp
+- Menu.cpp

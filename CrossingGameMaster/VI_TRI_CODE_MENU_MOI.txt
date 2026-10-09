@@ -1,0 +1,38 @@
+VI TRI CODE - MENU MOI
+======================
+
+File Menu.h
+- enum class Screen: quan ly 5 man hinh menu rieng biet.
+- selectedGameMode: 1 = Classic, 0 = Infinite.
+
+File Menu.cpp
+- Menu::load(): tao hitbox nut Main Menu, New Game mode, input va 10 slot.
+- Menu::drawMain(): giao dien Main Menu don gian, KHONG dung menu.png.
+- Menu::drawNewChooseMode(): Classic / Infinite.
+- Menu::drawNewEnterName(): nhap Name.
+- Menu::drawNewEnterId(): nhap ID + Start Game.
+- Menu::drawLoadScreen(): hien 10 slot voi Name / ID / Score / Mode / Stage.
+- Menu::createNewProfileAndStart(): tim slot trong dau tien va tao file save.
+- Menu::handleEvent(): moi Screen co handler rieng, khong con New Game / Load Game bi lan state.
+
+File main.cpp
+- HUD hien "INFINITE" thay cho "ENDLESS".
+- HUD hien "CLASSIC" thay cho "LEVEL".
+- Logic ben trong van giu GameMode::Endless / GameMode::Level de khong pha code cu.
+
+File SaveData.h
+- gameMode = 0: Infinite Mode.
+- gameMode = 1: Classic Mode.
+
+LUONG TEST
+----------
+1. Run game.
+2. Click NEW GAME.
+3. Click CLASSIC MODE hoac INFINITE MODE.
+4. Nhap Name -> Enter.
+5. Nhap ID -> Enter (hoac click START GAME).
+6. Game vao choi va tao SaveGame/slotN.txt.
+7. Pause -> Main Menu.
+8. Click LOAD GAME.
+9. Slot vua tao phai hien Name, ID, Score va Mode.
+10. Click slot de load lai game.

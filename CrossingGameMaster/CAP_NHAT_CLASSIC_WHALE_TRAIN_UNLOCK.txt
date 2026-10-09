@@ -1,0 +1,15 @@
+CAP NHAT CLASSIC - CWHALE / CTRAIN UNLOCK
+
+1. CWHALE
+- Level 1: CCAR only.
+- Level 2: CCAR only.
+- Level 3: CCAR + CBIRD.
+- Level 4-10: CCAR + CBIRD + CWHALE.
+- Logic: main.cpp -> spawnClassicLane().
+
+2. CTRAIN
+- Level 1-5: no train.
+- Level 6-10: train hazard enabled.
+- Config: LevelConfig.h -> trainHazard = true from Level 6 onward.
+
+Gameplay score/reset/save logic is unchanged.

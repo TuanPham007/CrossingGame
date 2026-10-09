@@ -1,0 +1,7 @@
+<Solution>
+  <Configurations>
+    <Platform Name="x64" />
+    <Platform Name="x86" />
+  </Configurations>
+  <Project Path="CrossingGameMaster/CrossingGameMaster.vcxproj" Id="c859a921-20a7-4c92-b315-44cb47716227" />
+</Solution>

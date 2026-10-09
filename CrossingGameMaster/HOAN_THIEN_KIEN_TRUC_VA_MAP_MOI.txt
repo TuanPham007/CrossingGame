@@ -1,0 +1,234 @@
+CROSSING GAME - BAN HOAN THIEN KIEN TRUC + MAP LAP HAZARD/SAFE
+==============================================================
+
+MUC TIEU CUA BAN NAY
+-------------------
+Ban nay duoc phat trien tu code moi nhat cua nhom va tap trung vao 2 muc tieu:
+1) Bo phu thuoc gameplay vao background.PNG/background2.png de nhom tu thiet ke lai giao dien sau.
+2) Bo sung cac subsystem con thieu khi doi chieu voi Group 5/6, nhung khong lam game qua phuc tap de demo.
+
+1. MAP GAMEPLAY MOI: 1 HAZARD + 1 SAFE LAP LAI
+----------------------------------------------
+Trong main.cpp:
+- LANE_STEP = 100 px
+- HAZARD_REPEAT = 200 px
+- Vi tri xuat phat cua player la SAFE lane.
+- Cac hazard lane nam cach nhau 200 px.
+- O giua 2 hazard lane luon co 1 safe lane.
+- Obstacle/river/train chi duoc tao tren hazard row.
+- Safe row hien tai to mau xanh la de nhom de nhin va thiet ke lai.
+
+Ham quan trong:
+    drawSimpleLaneMap(...)
+
+Ham nay chi ve placeholder:
+- hazard = xam
+- safe = xanh la
+
+Sau nay muon dung hinh anh, nhom chi can thay phan ve RectangleShape trong
+`drawSimpleLaneMap()` bang 2 texture tile:
+    hazardTile.png
+    safeTile.png
+KHONG can sua collision, spawn hay camera.
+
+background.PNG va background2.png van de trong thu muc de khong lam mat asset cu,
+nhung gameplay core khong con dung 2 file nay.
+
+2. ASSET MANAGER - SINGLETON PATTERN
+------------------------------------
+File moi:
+    AssetManager.h
+    AssetManager.cpp
+
+AssetManager::instance() chi tao mot resource manager duy nhat.
+Quan ly:
+    player.png
+    car.png
+    bird.png
+    whale.png
+    Font.ttf
+
+Day la phan co the dua vao slide Design Pattern / Singleton.
+
+3. SOUND MANAGER
+----------------
+File moi:
+    SoundManager.h
+    SoundManager.cpp
+
+Tai su dung asset am thanh da co cua project:
+    Move.wav       - di chuyen
+    ByeBye.wav     - va cham
+    Success.wav    - qua stage/level
+    win.wav        - victory
+    lose.wav       - game over
+
+Pause > Settings hien co 2 dieu khien rieng:
+    BGM Volume
+    SFX Volume
+
+Keyboard trong Settings:
+    Left/Right = BGM
+    A/D        = SFX
+    M          = mute BGM
+    N          = mute SFX
+
+4. MULTITHREADING AN TOAN
+-------------------------
+File moi:
+    GameLogicWorker.h
+    GameLogicWorker.cpp
+
+Worker su dung std::jthread + std::atomic.
+Worker KHONG truy cap sprite, vector obstacle hay RenderWindow.
+No chi xu ly logic timing cua traffic light va logic tick.
+
+Main Thread:
+    SFML event
+    player input
+    world update
+    rendering
+
+Worker Thread:
+    traffic phase timer
+    logic tick
+
+Cach tach nay tranh race condition trong khi van the hien multithreading ro rang.
+
+5. TRAFFIC LIGHT
+----------------
+File moi:
+    CTrafficLight.h
+    CTrafficLight.cpp
+
+Chu ky:
+    GREEN  3.5s
+    YELLOW 1.0s
+    RED    2.5s
+
+Khi RED:
+    CCAR/vehicle lanes dung.
+CBIRD, CWHALE, river/log khong bi traffic light dieu khien.
+
+Traffic light duoc ve tren HUD phia ben phai.
+
+6. SAVE/LOAD V6 - WORLD SNAPSHOT
+--------------------------------
+SaveData.h va CSAVEGAME.cpp da duoc nang cap thanh:
+    CROSSING_SAVE_V6
+
+Ngoai Name/ID/Mode/Level/Stage/Score/Lives/Player, save con luu:
+    worldSeed
+    cameraY
+    bestPlayerY
+    nextLaneY
+    difficultyTier
+    sequence indices
+    tung lane type
+    lane Y
+    lane speed
+    min/max gap
+    vi tri X cua tung obstacle/log
+    train Y
+
+Load Game V6 se khoi phuc bo cuc obstacle dang choi thay vi tao map ngau nhien moi.
+New Game luon tao worldSeed moi nen KHONG ke thua map cua slot truoc.
+
+Save cu V2-V5 van duoc doc theo che do backward compatibility; neu save cu khong co
+world snapshot, map se duoc rebuild tu seed/progress.
+
+7. FSM MO RONG
+--------------
+CGAME.h hien co:
+    Menu
+    Playing
+    Paused
+    GameOver
+    Victory
+    Exit
+
+GameOver va Victory khong con chi la mot boolean UI tam thoi.
+
+8. INVULNERABILITY + COLLISION FEEDBACK
+---------------------------------------
+Sau khi bi va cham:
+- player mat 1 life
+- phat hit SFX
+- player nhap nhay tam thoi (~0.85s)
+- trong khoang nay khong bi tru life lien tuc
+- man hinh flash do rat ngan khi bi hit
+
+F3 bat/tat debug hitbox:
+    do   = player
+    vang = obstacles/logs
+Debug OFF mac dinh de demo sach hon.
+
+9. LEADERBOARD
+--------------
+Main Menu co them LEADERBOARD.
+Lay du lieu tu 10 save slots va hien Top 5 profile.
+Classic duoc xep theo progress level + score; Infinite xep theo score.
+
+10. CAC GAMEPLAY DA GIU NGUYEN
+------------------------------
+CLASSIC:
+- 10 levels
+- 10 stages/level
+- 100 point/stage
+- 1000 point/level
+- speed +1%/stage o Level 1 ... +10%/stage o Level 10
+- River bat dau tu Level 5
+- Deep River, Mixed, Train van ton tai theo LevelConfig.h
+
+INFINITE:
+- Difficulty tang moi 200 diem
+- CCAR -> CBIRD -> CWHALE
+- River unlock tu Difficulty 10
+- 1 hazard / 1 safe lane lap lai
+
+11. NOI CHINH DE NHOM THIET KE BACKGROUND SAU NAY
+-------------------------------------------------
+File: main.cpp
+Tim:
+    drawSimpleLaneMap
+
+Day la noi duy nhat can thay visual map co ban.
+
+Goi y asset:
+    safeTile.png     1280 x 100 (hoac tile co the scale)
+    hazardTile.png   1280 x 100
+
+Logic row:
+    row chan = SAFE
+    row le   = HAZARD
+
+Neu muon them river visual rieng, CWaterLane::draw() hien dang ve nuoc/log bang shape,
+co the thay bang texture sau ma khong anh huong logic map.
+
+12. FILE PROJECT VISUAL STUDIO
+------------------------------
+CrossingGameMaster.vcxproj va .filters da duoc them cac file moi:
+    AssetManager.*
+    SoundManager.*
+    GameLogicWorker.*
+    CTrafficLight.*
+
+Project dang dung C++20 va duong dan SFML 3.1.0 cua project goc:
+    C:\\SFML-3.1.0
+
+13. PHIM DIEU KHIEN DE TEST
+---------------------------
+Movement: Arrow / WASD
+Pause:    ESC hoac nut Pause
+F3:       Debug hitboxes
+L:        Quick Save vao slot hien tai
+
+GHI CHU KIEM TRA
+----------------
+- CSAVEGAME V6 da duoc compile/test round-trip rieng bang C++20.
+- Toan bo source .cpp da duoc syntax/type-check trong mot SFML 3.x-compatible stub
+  de bat loi C++ va loi lien ket interface giua cac class.
+- Can Rebuild Solution tren may Windows co SFML 3.1.0 de test render/audio thuc te.
+
+LATEST NOTE (V7):
+See CAP_NHAT_V7_LEVEL_SELECT_GAMEOVER_TRAFFIC.txt. Classic no longer uses internal speed stages; it now uses 10 unlockable independent levels.

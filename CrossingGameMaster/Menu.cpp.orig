@@ -1,0 +1,1371 @@
+#include "Menu.h"
+#include "CSAVEGAME.h"
+#include "LeaderboardManager.h"
+
+#include <algorithm>
+#include <filesystem>
+#include <iomanip>
+#include <sstream>
+#include <vector>
+#include <system_error>
+
+namespace
+{
+    const sf::Color BackgroundColor(18, 24, 34);
+    const sf::Color PanelColor(30, 39, 53);
+    const sf::Color ButtonColor(47, 61, 80);
+    const sf::Color ButtonHoverColor(63, 83, 107);
+    const sf::Color AccentColor(244, 190, 72);
+    const sf::Color TextColor(242, 246, 250);
+    const sf::Color MutedColor(164, 178, 194);
+    const sf::Color ErrorColor(255, 120, 120);
+    const sf::Color DisabledColor(74, 80, 90);
+
+    void centerText(sf::Text& text, sf::Vector2f center)
+    {
+        const auto bounds = text.getLocalBounds();
+        text.setOrigin({
+            bounds.position.x + bounds.size.x / 2.f,
+            bounds.position.y + bounds.size.y / 2.f
+        });
+        text.setPosition(center);
+    }
+
+    void drawTextureRect(
+        sf::RenderWindow& window,
+        const sf::Texture& texture,
+        const sf::FloatRect& rect,
+        sf::Color tint = sf::Color::White)
+    {
+        const auto size = texture.getSize();
+        if (size.x == 0 || size.y == 0)
+            return;
+
+        sf::Sprite sprite(texture);
+        sprite.setPosition(rect.position);
+        sprite.setScale({
+            rect.size.x / static_cast<float>(size.x),
+            rect.size.y / static_cast<float>(size.y)
+        });
+        sprite.setColor(tint);
+        window.draw(sprite);
+    }
+
+    void drawSkinnedButton(
+        sf::RenderWindow& window,
+        sf::Font& font,
+        const sf::Texture& texture,
+        const sf::FloatRect& rect,
+        const sf::String& label,
+        bool hovered,
+        bool selected = false,
+        bool enabled = true,
+        unsigned int characterSize = 22)
+    {
+        const bool highlighted = enabled && (hovered || selected);
+
+        if (texture.getSize().x > 0 && texture.getSize().y > 0)
+        {
+            const sf::Color tint = enabled
+                ? (highlighted ? sf::Color(255, 255, 255) : sf::Color(238, 238, 238))
+                : sf::Color(125, 125, 125, 190);
+            drawTextureRect(window, texture, rect, tint);
+        }
+        else
+        {
+            sf::RectangleShape button(rect.size);
+            button.setPosition(rect.position);
+            button.setFillColor(enabled ? ButtonColor : DisabledColor);
+            window.draw(button);
+        }
+
+        sf::Text text(font);
+        text.setString(label);
+        text.setCharacterSize(characterSize);
+        text.setFillColor(!enabled
+            ? MutedColor
+            : (highlighted ? sf::Color(105, 245, 105) : sf::Color::White));
+        text.setOutlineColor(sf::Color(50, 30, 18, 180));
+        text.setOutlineThickness(1.2f);
+        centerText(text, {
+            rect.position.x + rect.size.x / 2.f,
+            rect.position.y + rect.size.y / 2.f - 1.f
+        });
+        window.draw(text);
+    }
+
+    void drawTitle(sf::RenderWindow& window, sf::Font& font, const sf::String& title,
+        const sf::String& subtitle = "")
+    {
+        sf::Text titleText(font);
+        titleText.setString(title);
+        titleText.setCharacterSize(42);
+        titleText.setFillColor(AccentColor);
+        centerText(titleText, { 640.f, 92.f });
+        window.draw(titleText);
+
+        if (!subtitle.isEmpty())
+        {
+            sf::Text subtitleText(font);
+            subtitleText.setString(subtitle);
+            subtitleText.setCharacterSize(18);
+            subtitleText.setFillColor(MutedColor);
+            centerText(subtitleText, { 640.f, 130.f });
+            window.draw(subtitleText);
+        }
+    }
+
+    std::string modeName(const SaveData& save)
+    {
+        if (save.gameMode == 1)
+            return "CLASSIC | UNLOCKED " + std::to_string(save.unlockedClassicLevel) + "/10";
+        return "INFINITE";
+    }
+}
+
+Menu::Menu() = default;
+
+bool Menu::load()
+{
+    // The main menu no longer depends on menu.png. It is intentionally built
+    // from simple SFML rectangles + text so visual buttons and click areas match.
+    if (!font.openFromFile("Font.ttf"))
+        return false;
+
+    // Keep the existing splash if available. A missing splash does not break menu.
+    if (splashTexture.loadFromFile("loading.png"))
+        splashSprite.emplace(splashTexture);
+
+    // New visual background for the menu. The image is stretched to the game window
+    // so UI hitboxes remain unchanged. If it cannot be loaded, the old solid color
+    // background is used as a fallback.
+    if (menuBackgroundTexture.loadFromFile("MenuBackground.png"))
+    {
+        menuBackgroundSprite.emplace(menuBackgroundTexture);
+        const auto size = menuBackgroundTexture.getSize();
+        if (size.x > 0 && size.y > 0)
+        {
+            menuBackgroundSprite->setScale({
+                1280.f / static_cast<float>(size.x),
+                720.f / static_cast<float>(size.y)
+            });
+        }
+    }
+
+    // Fantasy wood skin for every menu screen. All six files are optional as a
+    // group; if one is missing the old rectangle fallback still works.
+    menuSkinLoaded =
+        frameMainTexture.loadFromFile("Khung (1).png") &&
+        frameLevelTexture.loadFromFile("Khung (5).png") &&
+        frameWideTexture.loadFromFile("Khung (3).png") &&
+        button1Texture.loadFromFile("Button1.png") &&
+        button2Texture.loadFromFile("Button2.png") &&
+        button3Texture.loadFromFile("Button3.png");
+
+    // MAIN MENU is intentionally a little smaller than before.
+    newGameRect = { { 490.f, 230.f }, { 300.f, 58.f } };
+    loadGameRect = { { 490.f, 300.f }, { 300.f, 58.f } };
+    leaderboardRect = { { 490.f, 370.f }, { 300.f, 58.f } };
+    exitRect = { { 490.f, 440.f }, { 300.f, 58.f } };
+
+    // NEW GAME mode selection uses the wider Button2 artwork.
+    classicModeRect = { { 315.f, 275.f }, { 290.f, 88.f } };
+    infiniteModeRect = { { 675.f, 275.f }, { 290.f, 88.f } };
+
+    // Name / ID input screens. NEXT/BACK always use Button1.
+    inputFieldRect = { { 365.f, 285.f }, { 550.f, 68.f } };
+    startRect = { { 515.f, 410.f }, { 250.f, 56.f } };
+    backRect = { { 515.f, 520.f }, { 250.f, 54.f } };
+
+    // LOAD GAME: 2 columns x 5 rows = 10 slots.
+    for (int i = 0; i < 10; ++i)
+    {
+        const int column = i % 2;
+        const int row = i / 2;
+        slotRects[i] = {
+            { 120.f + column * 530.f, 165.f + row * 82.f },
+            { 510.f, 68.f }
+        };
+        slotDeleteRects[i] = {
+            { slotRects[i].position.x + 462.f, slotRects[i].position.y + 17.f },
+            { 34.f, 34.f }
+        };
+    }
+
+    // CLASSIC LEVEL SELECT: 5 columns x 2 rows inside Khung (5).
+    // Smaller cards and tighter gaps keep all 10 level buttons inside the inner wood area.
+    for (int i = 0; i < 10; ++i)
+    {
+        const int column = i % 5;
+        const int row = i / 5;
+        classicLevelRects[i] = {
+            { 205.f + column * 174.f, 258.f + row * 118.f },
+            { 150.f, 84.f }
+        };
+    }
+
+    refreshSlots();
+    return true;
+}
+
+void Menu::update()
+{
+}
+
+void Menu::refreshSlots()
+{
+    std::filesystem::create_directories("SaveGame");
+
+    for (int i = 0; i < 10; ++i)
+    {
+        SaveData save;
+        slotUsed[i] = CSAVEGAME::Load(save, getSlotPath(i));
+        slotData[i] = slotUsed[i] ? save : SaveData{};
+    }
+}
+
+int Menu::findEmptySlot() const
+{
+    for (int i = 0; i < 10; ++i)
+    {
+        if (!slotUsed[i])
+            return i;
+    }
+    return -1;
+}
+
+std::string Menu::getSlotPath(int slotIndex)
+{
+    return "SaveGame/slot" + std::to_string(slotIndex + 1) + ".txt";
+}
+
+void Menu::openNewGame()
+{
+    startGame = false;
+    loadGame = false;
+    requestedSlot = -1;
+
+    selectedGameMode = 1; // Default highlight: Classic.
+    inputName.clear();
+    inputId.clear();
+    inputError.clear();
+
+    screen = Screen::NewChooseMode;
+}
+
+void Menu::openLoadGame()
+{
+    startGame = false;
+    loadGame = false;
+    requestedSlot = -1;
+    inputError.clear();
+    refreshSlots();
+    screen = Screen::Load;
+}
+
+void Menu::openLeaderboard()
+{
+    startGame = false;
+    loadGame = false;
+    refreshSlots();
+
+    // Backfill Classic ranking from existing save progress. Infinite is NOT
+    // backfilled from slots because its ranking is intentionally run-based.
+    for (int i = 0; i < 10; ++i)
+    {
+        if (slotUsed[i] && slotData[i].gameMode == 1)
+        {
+            LeaderboardManager::recordClassicProgress(
+                slotData[i].playerName,
+                slotData[i].playerId,
+                slotData[i].classicCompletedLevels);
+        }
+    }
+    screen = Screen::Leaderboard;
+}
+
+void Menu::drawSplash(sf::RenderWindow& window)
+{
+    if (splashSprite)
+        window.draw(*splashSprite);
+}
+
+void Menu::drawMenu(sf::RenderWindow& window)
+{
+    if (menuBackgroundSprite)
+    {
+        window.draw(*menuBackgroundSprite);
+
+        // A light dark veil keeps text/buttons readable without hiding the artwork.
+        sf::RectangleShape veil({ 1280.f, 720.f });
+        veil.setFillColor(sf::Color(8, 14, 24, 72));
+        window.draw(veil);
+    }
+    else
+    {
+        sf::RectangleShape background({ 1280.f, 720.f });
+        background.setFillColor(BackgroundColor);
+        window.draw(background);
+    }
+
+    switch (screen)
+    {
+    case Screen::Main:
+        drawMain(window);
+        break;
+    case Screen::NewChooseMode:
+        drawNewChooseMode(window);
+        break;
+    case Screen::NewEnterName:
+        drawNewEnterName(window);
+        break;
+    case Screen::NewEnterId:
+        drawNewEnterId(window);
+        break;
+    case Screen::Load:
+        drawLoadScreen(window);
+        break;
+    case Screen::ClassicLevelSelect:
+        drawClassicLevelSelect(window);
+        break;
+    case Screen::Leaderboard:
+        drawLeaderboard(window);
+        break;
+    }
+}
+
+void Menu::drawMain(sf::RenderWindow& window)
+{
+    // Main title is deliberately much larger than the titles on sub-screens.
+    sf::Text title(font);
+    title.setString("CROSSING GAME");
+    title.setCharacterSize(64);
+    title.setFillColor(sf::Color(255, 221, 115));
+    title.setOutlineColor(sf::Color(74, 40, 20));
+    title.setOutlineThickness(4.f);
+    centerText(title, { 640.f, 82.f });
+    window.draw(title);
+
+    const sf::FloatRect panelRect({ 430.f, 145.f }, { 420.f, 405.f });
+    if (menuSkinLoaded)
+        drawTextureRect(window, frameMainTexture, panelRect);
+    else
+    {
+        sf::RectangleShape panel(panelRect.size);
+        panel.setPosition(panelRect.position);
+        panel.setFillColor(PanelColor);
+        window.draw(panel);
+    }
+
+    const sf::Vector2f mouse = window.mapPixelToCoords(sf::Mouse::getPosition(window));
+    drawSkinnedButton(window, font, button1Texture, newGameRect, "NEW GAME",
+        newGameRect.contains(mouse), selectedMain == 0, true, 21);
+    drawSkinnedButton(window, font, button1Texture, loadGameRect, "LOAD GAME",
+        loadGameRect.contains(mouse), selectedMain == 1, true, 21);
+    drawSkinnedButton(window, font, button1Texture, leaderboardRect, "LEADERBOARD",
+        leaderboardRect.contains(mouse), selectedMain == 2, true, 20);
+    drawSkinnedButton(window, font, button1Texture, exitRect, "EXIT",
+        exitRect.contains(mouse), selectedMain == 3, true, 21);
+
+    sf::Text help(font);
+    help.setString("Mouse: click a button     Keyboard: UP/DOWN + ENTER");
+    help.setCharacterSize(16);
+    help.setFillColor(sf::Color::White);
+    centerText(help, { 640.f, 590.f });
+    window.draw(help);
+}
+
+void Menu::drawNewChooseMode(sf::RenderWindow& window)
+{
+    drawTitle(window, font, "NEW GAME", "Step 1/3 - Choose a game mode");
+
+    const sf::FloatRect panelRect({ 165.f, 160.f }, { 950.f, 420.f });
+    if (menuSkinLoaded)
+        drawTextureRect(window, frameWideTexture, panelRect);
+    else
+    {
+        sf::RectangleShape panel(panelRect.size);
+        panel.setPosition(panelRect.position);
+        panel.setFillColor(PanelColor);
+        window.draw(panel);
+    }
+
+    const sf::Vector2f mouse = window.mapPixelToCoords(sf::Mouse::getPosition(window));
+
+    drawSkinnedButton(window, font, button2Texture, classicModeRect, "CLASSIC MODE",
+        classicModeRect.contains(mouse), selectedGameMode == 1, true, 22);
+    drawSkinnedButton(window, font, button2Texture, infiniteModeRect, "INFINITE MODE",
+        infiniteModeRect.contains(mouse), selectedGameMode == 0, true, 22);
+
+    sf::Text classicInfo(font);
+    classicInfo.setString("10 separate levels\n1000 points = clear one level");
+    classicInfo.setCharacterSize(16);
+    classicInfo.setFillColor(sf::Color::White);
+    centerText(classicInfo, { 460.f, 402.f });
+    window.draw(classicInfo);
+
+    sf::Text infiniteInfo(font);
+    infiniteInfo.setString("Endless run\nDifficulty increases every 200 points");
+    infiniteInfo.setCharacterSize(16);
+    infiniteInfo.setFillColor(sf::Color::White);
+    centerText(infiniteInfo, { 820.f, 402.f });
+    window.draw(infiniteInfo);
+
+    drawSkinnedButton(window, font, button1Texture, backRect, "BACK",
+        backRect.contains(mouse), false, true, 20);
+
+    sf::Text help(font);
+    help.setString("Click a mode, or LEFT/RIGHT then ENTER");
+    help.setCharacterSize(16);
+    help.setFillColor(sf::Color::White);
+    centerText(help, { 640.f, 485.f });
+    window.draw(help);
+}
+
+void Menu::drawNewEnterName(sf::RenderWindow& window)
+{
+    drawTitle(window, font, "NEW GAME",
+        selectedGameMode == 1 ? "Step 2/3 - CLASSIC MODE - Enter your name"
+                              : "Step 2/3 - INFINITE MODE - Enter your name");
+
+    const sf::FloatRect panelRect({ 250.f, 165.f }, { 780.f, 420.f });
+    if (menuSkinLoaded)
+        drawTextureRect(window, frameWideTexture, panelRect);
+    else
+    {
+        sf::RectangleShape panel(panelRect.size);
+        panel.setPosition(panelRect.position);
+        panel.setFillColor(PanelColor);
+        window.draw(panel);
+    }
+
+    sf::RectangleShape field(inputFieldRect.size);
+    field.setPosition(inputFieldRect.position);
+    field.setFillColor(sf::Color(70, 39, 21, 185));
+    field.setOutlineColor(sf::Color(255, 222, 143));
+    field.setOutlineThickness(2.5f);
+    window.draw(field);
+
+    sf::Text label(font);
+    sf::String text = "NAME: ";
+    text += inputName;
+    text += "_";
+    label.setString(text);
+    label.setCharacterSize(23);
+    label.setFillColor(sf::Color::White);
+    label.setPosition({ inputFieldRect.position.x + 22.f, inputFieldRect.position.y + 19.f });
+    window.draw(label);
+
+    const sf::Vector2f mouse = window.mapPixelToCoords(sf::Mouse::getPosition(window));
+    drawSkinnedButton(window, font, button1Texture, startRect, "NEXT",
+        startRect.contains(mouse), false, true, 20);
+    drawSkinnedButton(window, font, button1Texture, backRect, "BACK",
+        backRect.contains(mouse), false, true, 20);
+
+    sf::Text help(font);
+    help.setString("Type your name. ENTER = next, BACKSPACE = delete");
+    help.setCharacterSize(16);
+    help.setFillColor(sf::Color::White);
+    centerText(help, { 640.f, 385.f });
+    window.draw(help);
+
+    if (!inputError.isEmpty())
+    {
+        sf::Text error(font);
+        error.setString(inputError);
+        error.setCharacterSize(16);
+        error.setFillColor(ErrorColor);
+        centerText(error, { 640.f, 490.f });
+        window.draw(error);
+    }
+}
+
+void Menu::drawNewEnterId(sf::RenderWindow& window)
+{
+    drawTitle(window, font, "NEW GAME",
+        selectedGameMode == 1 ? "Step 3/3 - CLASSIC MODE - Enter your ID"
+                              : "Step 3/3 - INFINITE MODE - Enter your ID");
+
+    const sf::FloatRect panelRect({ 250.f, 165.f }, { 780.f, 420.f });
+    if (menuSkinLoaded)
+        drawTextureRect(window, frameWideTexture, panelRect);
+    else
+    {
+        sf::RectangleShape panel(panelRect.size);
+        panel.setPosition(panelRect.position);
+        panel.setFillColor(PanelColor);
+        window.draw(panel);
+    }
+
+    sf::Text nameSummary(font);
+    sf::String summary = "PLAYER: ";
+    summary += inputName;
+    nameSummary.setString(summary);
+    nameSummary.setCharacterSize(18);
+    nameSummary.setFillColor(sf::Color::White);
+    centerText(nameSummary, { 640.f, 245.f });
+    window.draw(nameSummary);
+
+    sf::RectangleShape field(inputFieldRect.size);
+    field.setPosition(inputFieldRect.position);
+    field.setFillColor(sf::Color(70, 39, 21, 185));
+    field.setOutlineColor(sf::Color(255, 222, 143));
+    field.setOutlineThickness(2.5f);
+    window.draw(field);
+
+    sf::Text label(font);
+    sf::String text = "ID: ";
+    text += inputId;
+    text += "_";
+    label.setString(text);
+    label.setCharacterSize(23);
+    label.setFillColor(sf::Color::White);
+    label.setPosition({ inputFieldRect.position.x + 22.f, inputFieldRect.position.y + 19.f });
+    window.draw(label);
+
+    const sf::Vector2f mouse = window.mapPixelToCoords(sf::Mouse::getPosition(window));
+    drawSkinnedButton(window, font, button1Texture, startRect,
+        selectedGameMode == 1 ? "LEVEL SELECT" : "START GAME",
+        startRect.contains(mouse), false, true, 19);
+    drawSkinnedButton(window, font, button1Texture, backRect, "BACK",
+        backRect.contains(mouse), false, true, 20);
+
+    sf::Text help(font);
+    help.setString(selectedGameMode == 1
+        ? "ENTER = create profile and open Level Select"
+        : "ENTER = create profile and start Infinite Mode");
+    help.setCharacterSize(16);
+    help.setFillColor(sf::Color::White);
+    centerText(help, { 640.f, 385.f });
+    window.draw(help);
+
+    if (!inputError.isEmpty())
+    {
+        sf::Text error(font);
+        error.setString(inputError);
+        error.setCharacterSize(16);
+        error.setFillColor(ErrorColor);
+        centerText(error, { 640.f, 490.f });
+        window.draw(error);
+    }
+}
+
+void Menu::drawLoadScreen(sf::RenderWindow& window)
+{
+    drawTitle(window, font, "LOAD GAME", "Click a save button to continue | X deletes the slot");
+
+    const sf::FloatRect panelRect({ 55.f, 135.f }, { 1170.f, 545.f });
+    if (menuSkinLoaded)
+        drawTextureRect(window, frameWideTexture, panelRect);
+    else
+    {
+        sf::RectangleShape panel(panelRect.size);
+        panel.setPosition(panelRect.position);
+        panel.setFillColor(PanelColor);
+        window.draw(panel);
+    }
+
+    const sf::Vector2f mouse = window.mapPixelToCoords(sf::Mouse::getPosition(window));
+    bool hasAnySave = false;
+
+    for (int i = 0; i < 10; ++i)
+    {
+        if (slotUsed[i]) hasAnySave = true;
+
+        const bool hovered = slotUsed[i] && slotRects[i].contains(mouse);
+        const bool deleteHovered = slotUsed[i] && slotDeleteRects[i].contains(mouse);
+
+        if (button1Texture.getSize().x > 0)
+            drawTextureRect(window, button1Texture, slotRects[i],
+                !slotUsed[i] ? sf::Color(125,125,125,185)
+                             : (hovered ? sf::Color::White : sf::Color(238,238,238)));
+        else
+        {
+            sf::RectangleShape fallback(slotRects[i].size);
+            fallback.setPosition(slotRects[i].position);
+            fallback.setFillColor(slotUsed[i] ? ButtonColor : DisabledColor);
+            window.draw(fallback);
+        }
+
+        std::ostringstream slotNumber;
+        slotNumber << "SLOT " << std::setw(2) << std::setfill('0') << (i + 1);
+
+        const sf::Color slotTextColor = !slotUsed[i]
+            ? MutedColor
+            : (hovered ? sf::Color(105,245,105) : sf::Color::White);
+
+        sf::Text slotTitle(font);
+        slotTitle.setString(slotNumber.str());
+        slotTitle.setCharacterSize(15);
+        slotTitle.setFillColor(slotTextColor);
+        slotTitle.setPosition({ slotRects[i].position.x + 22.f, slotRects[i].position.y + 9.f });
+        window.draw(slotTitle);
+
+        sf::Text details(font);
+        if (slotUsed[i])
+        {
+            sf::String line;
+            line += sf::String::fromUtf8(slotData[i].playerName.begin(), slotData[i].playerName.end());
+            line += " | ID: ";
+            line += sf::String::fromUtf8(slotData[i].playerId.begin(), slotData[i].playerId.end());
+            if (slotData[i].gameMode == 1)
+            {
+                line += " | CLEARED: ";
+                line += std::to_string(slotData[i].classicCompletedLevels);
+                line += "/10";
+            }
+            else
+            {
+                line += " | BEST: ";
+                line += std::to_string(slotData[i].highScore);
+            }
+            line += "\n";
+            line += modeName(slotData[i]);
+            details.setString(line);
+            details.setFillColor(slotTextColor);
+        }
+        else
+        {
+            details.setString("EMPTY");
+            details.setFillColor(MutedColor);
+        }
+
+        details.setCharacterSize(14);
+        details.setPosition({ slotRects[i].position.x + 88.f, slotRects[i].position.y + 9.f });
+        window.draw(details);
+
+        if (slotUsed[i])
+        {
+            sf::CircleShape deleteButton(16.f);
+            deleteButton.setOrigin({16.f,16.f});
+            deleteButton.setPosition({
+                slotDeleteRects[i].position.x + slotDeleteRects[i].size.x / 2.f,
+                slotDeleteRects[i].position.y + slotDeleteRects[i].size.y / 2.f
+            });
+            deleteButton.setFillColor(deleteHovered ? sf::Color(200,70,70) : sf::Color(120,45,45));
+            deleteButton.setOutlineColor(sf::Color(255,210,190));
+            deleteButton.setOutlineThickness(1.5f);
+            window.draw(deleteButton);
+
+            sf::Text x(font);
+            x.setString("X");
+            x.setCharacterSize(17);
+            x.setFillColor(sf::Color::White);
+            centerText(x, deleteButton.getPosition());
+            window.draw(x);
+        }
+    }
+
+    const sf::FloatRect loadBackRect = { { 515.f, 600.f }, { 250.f, 50.f } };
+    drawSkinnedButton(window, font, button1Texture, loadBackRect, "BACK",
+        loadBackRect.contains(mouse), false, true, 19);
+
+    if (!inputError.isEmpty())
+    {
+        sf::Text feedback(font);
+        feedback.setString(inputError);
+        feedback.setCharacterSize(15);
+        feedback.setFillColor(sf::Color(115, 245, 115));
+        centerText(feedback, { 640.f, 568.f });
+        window.draw(feedback);
+    }
+
+    if (!hasAnySave)
+    {
+        sf::Text emptyHint(font);
+        emptyHint.setString("No saved game yet. Create one from NEW GAME first.");
+        emptyHint.setCharacterSize(16);
+        emptyHint.setFillColor(sf::Color::White);
+        centerText(emptyHint, { 640.f, 568.f });
+        window.draw(emptyHint);
+    }
+}
+
+void Menu::drawClassicLevelSelect(sf::RenderWindow& window)
+{
+    const int unlocked = std::clamp(requestedSave.unlockedClassicLevel, 1, 10);
+    drawTitle(window, font, "CLASSIC - LEVEL SELECT",
+        "Complete a level with 1000 points to unlock the next one");
+
+    const sf::FloatRect panelRect({ 115.f, 120.f }, { 1050.f, 585.f });
+    if (menuSkinLoaded)
+        drawTextureRect(window, frameLevelTexture, panelRect);
+    else
+    {
+        sf::RectangleShape panel(panelRect.size);
+        panel.setPosition(panelRect.position);
+        panel.setFillColor(PanelColor);
+        window.draw(panel);
+    }
+
+    const sf::Vector2f mouse = window.mapPixelToCoords(sf::Mouse::getPosition(window));
+    for (int i = 0; i < 10; ++i)
+    {
+        const int levelNumber = i + 1;
+        const bool enabled = levelNumber <= unlocked;
+        const bool hovered = enabled && classicLevelRects[i].contains(mouse);
+
+        if (button3Texture.getSize().x > 0)
+            drawTextureRect(window, button3Texture, classicLevelRects[i],
+                enabled ? sf::Color::White : sf::Color(120,120,120,190));
+        else
+        {
+            sf::RectangleShape card(classicLevelRects[i].size);
+            card.setPosition(classicLevelRects[i].position);
+            card.setFillColor(enabled ? ButtonColor : DisabledColor);
+            window.draw(card);
+        }
+
+        sf::Text title(font);
+        title.setString("LEVEL " + std::to_string(levelNumber));
+        title.setCharacterSize(18);
+        title.setFillColor(!enabled ? MutedColor :
+            (hovered ? sf::Color(105,245,105) : sf::Color::White));
+        centerText(title, {
+            classicLevelRects[i].position.x + classicLevelRects[i].size.x / 2.f,
+            classicLevelRects[i].position.y + 30.f
+        });
+        window.draw(title);
+
+        sf::Text status(font);
+        status.setString(enabled ? (levelNumber == 1 ? "READY" : "UNLOCKED") : "LOCKED");
+        status.setCharacterSize(12);
+        status.setFillColor(!enabled ? MutedColor :
+            (hovered ? sf::Color(105,245,105) : sf::Color::White));
+        centerText(status, {
+            classicLevelRects[i].position.x + classicLevelRects[i].size.x / 2.f,
+            classicLevelRects[i].position.y + 56.f
+        });
+        window.draw(status);
+    }
+
+    sf::Text progress(font);
+    progress.setString("Unlocked: " + std::to_string(unlocked) + "/10   |   Completed: " +
+        std::to_string(requestedSave.classicCompletedLevels) + "/10");
+    progress.setCharacterSize(17);
+    progress.setFillColor(sf::Color::White);
+    centerText(progress, { 640.f, 510.f });
+    window.draw(progress);
+
+    const sf::FloatRect levelBack = { { 515.f, 560.f }, { 250.f, 48.f } };
+    drawSkinnedButton(window, font, button1Texture, levelBack, "BACK TO MENU",
+        levelBack.contains(mouse), false, true, 18);
+}
+
+void Menu::drawLeaderboard(sf::RenderWindow& window)
+{
+    drawTitle(window, font, "LEADERBOARD", "CLASSIC progress and INFINITE run scores are ranked separately");
+
+    // Two physically separate boards make the two ranking rules much easier to
+    // read and avoid the old single-panel layout looking crowded.
+    const sf::FloatRect classicBoard({ 45.f, 150.f }, { 575.f, 455.f });
+    const sf::FloatRect infiniteBoard({ 660.f, 150.f }, { 575.f, 455.f });
+
+    auto drawBoard = [&](const sf::FloatRect& rect)
+    {
+        if (menuSkinLoaded && frameWideTexture.getSize().x > 0)
+            drawTextureRect(window, frameWideTexture, rect);
+        else
+        {
+            sf::RectangleShape panel(rect.size);
+            panel.setPosition(rect.position);
+            panel.setFillColor(PanelColor);
+            window.draw(panel);
+        }
+    };
+
+    drawBoard(classicBoard);
+    drawBoard(infiniteBoard);
+
+    sf::Text classicTitle(font);
+    classicTitle.setString("CLASSIC - TOP 5");
+    classicTitle.setCharacterSize(22);
+    classicTitle.setFillColor(sf::Color::White);
+    classicTitle.setOutlineColor(sf::Color(65, 34, 18, 180));
+    classicTitle.setOutlineThickness(1.2f);
+    centerText(classicTitle, { 332.5f, 205.f });
+    window.draw(classicTitle);
+
+    sf::Text infiniteTitle(font);
+    infiniteTitle.setString("INFINITE - TOP 5 RUNS");
+    infiniteTitle.setCharacterSize(22);
+    infiniteTitle.setFillColor(sf::Color::White);
+    infiniteTitle.setOutlineColor(sf::Color(65, 34, 18, 180));
+    infiniteTitle.setOutlineThickness(1.2f);
+    centerText(infiniteTitle, { 947.5f, 205.f });
+    window.draw(infiniteTitle);
+
+    const auto classicEntries = LeaderboardManager::loadClassicTop(5);
+    const auto infiniteEntries = LeaderboardManager::loadInfiniteTop(5);
+
+    for (std::size_t rank = 0; rank < classicEntries.size(); ++rank)
+    {
+        const auto& entry = classicEntries[rank];
+        const sf::FloatRect rowRect({ 82.f, 235.f + static_cast<float>(rank) * 62.f }, { 500.f, 52.f });
+        if (button1Texture.getSize().x > 0)
+            drawTextureRect(window, button1Texture, rowRect);
+
+        sf::Text text(font);
+        sf::String line = std::to_string(rank + 1) + ". ";
+        line += sf::String::fromUtf8(entry.playerName.begin(), entry.playerName.end());
+        line += " | CLEARED: ";
+        line += std::to_string(entry.completedLevels);
+        line += "/10";
+        text.setString(line);
+        text.setCharacterSize(15);
+        text.setFillColor(sf::Color::White);
+        text.setOutlineColor(sf::Color(65, 34, 18, 170));
+        text.setOutlineThickness(1.f);
+        centerText(text, { rowRect.position.x + rowRect.size.x / 2.f, rowRect.position.y + rowRect.size.y / 2.f });
+        window.draw(text);
+    }
+
+    for (std::size_t rank = 0; rank < infiniteEntries.size(); ++rank)
+    {
+        const auto& entry = infiniteEntries[rank];
+        const sf::FloatRect rowRect({ 697.f, 235.f + static_cast<float>(rank) * 62.f }, { 500.f, 52.f });
+        if (button1Texture.getSize().x > 0)
+            drawTextureRect(window, button1Texture, rowRect);
+
+        sf::Text text(font);
+        sf::String line = std::to_string(rank + 1) + ". ";
+        line += sf::String::fromUtf8(entry.playerName.begin(), entry.playerName.end());
+        line += " | SCORE: ";
+        line += std::to_string(entry.score);
+        text.setString(line);
+        text.setCharacterSize(15);
+        text.setFillColor(sf::Color::White);
+        text.setOutlineColor(sf::Color(65, 34, 18, 170));
+        text.setOutlineThickness(1.f);
+        centerText(text, { rowRect.position.x + rowRect.size.x / 2.f, rowRect.position.y + rowRect.size.y / 2.f });
+        window.draw(text);
+    }
+
+    if (classicEntries.empty())
+    {
+        sf::Text empty(font);
+        empty.setString("No Classic clears yet.");
+        empty.setCharacterSize(17);
+        empty.setFillColor(sf::Color::White);
+        centerText(empty, { 332.5f, 385.f });
+        window.draw(empty);
+    }
+
+    if (infiniteEntries.empty())
+    {
+        sf::Text empty(font);
+        empty.setString("No Infinite runs yet.");
+        empty.setCharacterSize(17);
+        empty.setFillColor(sf::Color::White);
+        centerText(empty, { 947.5f, 385.f });
+        window.draw(empty);
+    }
+
+    const sf::Vector2f mouse = window.mapPixelToCoords(sf::Mouse::getPosition(window));
+    const sf::FloatRect leaderboardBack = { { 500.f, 625.f }, { 280.f, 50.f } };
+    drawSkinnedButton(window, font, button1Texture, leaderboardBack, "BACK",
+        leaderboardBack.contains(mouse), false, true, 19);
+}
+
+void Menu::createNewProfileAndStart(CGAME& state)
+{
+    if (inputName.isEmpty() || inputId.isEmpty())
+    {
+        inputError = "Please enter both Name and ID.";
+        return;
+    }
+
+    refreshSlots();
+    const int emptySlot = findEmptySlot();
+    if (emptySlot < 0)
+    {
+        inputError = "All 10 save slots are full. Delete a save file before creating another game.";
+        return;
+    }
+
+    SaveData save;
+    const auto nameUtf8 = inputName.toUtf8();
+    const auto idUtf8 = inputId.toUtf8();
+    save.playerName.assign(nameUtf8.begin(), nameUtf8.end());
+    save.playerId.assign(idUtf8.begin(), idUtf8.end());
+    save.gameMode = selectedGameMode; // 1 Classic, 0 Infinite.
+    save.currentStage = 1;
+    save.classicStage = 1;
+    save.level = 1;
+    save.score = 0;
+    save.highScore = 0;
+    save.unlockedClassicLevel = 1;
+    save.classicCompletedLevels = 0;
+    save.lives = selectedGameMode == 1 ? 1 : 3;
+    save.playerX = 615.f;
+    save.playerY = 610.f;
+    save.checkpointX = 615.f;
+    save.checkpointY = 610.f;
+
+    std::filesystem::create_directories("SaveGame");
+    if (!CSAVEGAME::Save(save, getSlotPath(emptySlot)))
+    {
+        inputError = "Cannot create save file.";
+        return;
+    }
+
+    requestedSave = save;
+    requestedSlot = emptySlot;
+    loadGame = false;
+
+    if (selectedGameMode == 1)
+    {
+        // Classic always goes through LEVEL SELECT. Initially only Level 1 is unlocked.
+        startGame = false;
+        screen = Screen::ClassicLevelSelect;
+        state = CGAME::Menu;
+    }
+    else
+    {
+        startGame = true;
+        screen = Screen::Main;
+        state = CGAME::Playing;
+    }
+}
+
+void Menu::handleMainEvent(sf::RenderWindow& window, const sf::Event& event)
+{
+    if (const auto* key = event.getIf<sf::Event::KeyPressed>())
+    {
+        if (key->code == sf::Keyboard::Key::Up)
+        {
+            selectedMain = (selectedMain + 3) % 4;
+            return;
+        }
+        if (key->code == sf::Keyboard::Key::Down)
+        {
+            selectedMain = (selectedMain + 1) % 4;
+            return;
+        }
+        if (key->code == sf::Keyboard::Key::Enter)
+        {
+            if (selectedMain == 0)
+                openNewGame();
+            else if (selectedMain == 1)
+                openLoadGame();
+            else if (selectedMain == 2)
+                openLeaderboard();
+            else
+                window.close();
+            return;
+        }
+    }
+
+    if (const auto* mouse = event.getIf<sf::Event::MouseButtonPressed>())
+    {
+        if (mouse->button != sf::Mouse::Button::Left)
+            return;
+
+        const sf::Vector2f pos = window.mapPixelToCoords(mouse->position);
+        if (newGameRect.contains(pos))
+            openNewGame();
+        else if (loadGameRect.contains(pos))
+            openLoadGame();
+        else if (leaderboardRect.contains(pos))
+            openLeaderboard();
+        else if (exitRect.contains(pos))
+            window.close();
+    }
+}
+
+void Menu::handleNewChooseModeEvent(sf::RenderWindow& window, const sf::Event& event)
+{
+    if (const auto* key = event.getIf<sf::Event::KeyPressed>())
+    {
+        if (key->code == sf::Keyboard::Key::Escape)
+        {
+            screen = Screen::Main;
+            return;
+        }
+        if (key->code == sf::Keyboard::Key::Left || key->code == sf::Keyboard::Key::A)
+        {
+            selectedGameMode = 1; // Classic.
+            return;
+        }
+        if (key->code == sf::Keyboard::Key::Right || key->code == sf::Keyboard::Key::D)
+        {
+            selectedGameMode = 0; // Infinite.
+            return;
+        }
+        if (key->code == sf::Keyboard::Key::Enter)
+        {
+            inputError.clear();
+            screen = Screen::NewEnterName;
+            return;
+        }
+    }
+
+    if (const auto* mouse = event.getIf<sf::Event::MouseButtonPressed>())
+    {
+        if (mouse->button != sf::Mouse::Button::Left)
+            return;
+
+        const sf::Vector2f pos = window.mapPixelToCoords(mouse->position);
+        if (classicModeRect.contains(pos))
+        {
+            selectedGameMode = 1;
+            inputError.clear();
+            screen = Screen::NewEnterName;
+        }
+        else if (infiniteModeRect.contains(pos))
+        {
+            selectedGameMode = 0;
+            inputError.clear();
+            screen = Screen::NewEnterName;
+        }
+        else if (backRect.contains(pos))
+        {
+            screen = Screen::Main;
+        }
+    }
+}
+
+void Menu::handleNewEnterNameEvent(const sf::Event& event)
+{
+    if (const auto* key = event.getIf<sf::Event::KeyPressed>())
+    {
+        if (key->code == sf::Keyboard::Key::Escape)
+        {
+            inputError.clear();
+            screen = Screen::NewChooseMode;
+            return;
+        }
+        if (key->code == sf::Keyboard::Key::Backspace)
+        {
+            if (!inputName.isEmpty())
+                inputName.erase(inputName.getSize() - 1);
+            inputError.clear();
+            return;
+        }
+        if (key->code == sf::Keyboard::Key::Enter)
+        {
+            if (inputName.isEmpty())
+                inputError = "Name cannot be empty.";
+            else
+            {
+                inputError.clear();
+                screen = Screen::NewEnterId;
+            }
+            return;
+        }
+    }
+
+    if (const auto* text = event.getIf<sf::Event::TextEntered>())
+    {
+        const char32_t unicode = text->unicode;
+        if (unicode >= 32 && unicode != 127 && inputName.getSize() < 24)
+            inputName += sf::String(unicode);
+    }
+}
+
+void Menu::handleNewEnterIdEvent(sf::RenderWindow& window, const sf::Event& event, CGAME& state)
+{
+    if (const auto* key = event.getIf<sf::Event::KeyPressed>())
+    {
+        if (key->code == sf::Keyboard::Key::Escape)
+        {
+            inputError.clear();
+            screen = Screen::NewEnterName;
+            return;
+        }
+        if (key->code == sf::Keyboard::Key::Backspace)
+        {
+            if (!inputId.isEmpty())
+                inputId.erase(inputId.getSize() - 1);
+            inputError.clear();
+            return;
+        }
+        if (key->code == sf::Keyboard::Key::Enter)
+        {
+            if (inputId.isEmpty())
+                inputError = "ID cannot be empty.";
+            else
+                createNewProfileAndStart(state);
+            return;
+        }
+    }
+
+    if (const auto* mouse = event.getIf<sf::Event::MouseButtonPressed>())
+    {
+        if (mouse->button != sf::Mouse::Button::Left)
+            return;
+
+        const sf::Vector2f pos = window.mapPixelToCoords(mouse->position);
+        if (startRect.contains(pos))
+        {
+            if (inputId.isEmpty())
+                inputError = "ID cannot be empty.";
+            else
+                createNewProfileAndStart(state);
+            return;
+        }
+        if (backRect.contains(pos))
+        {
+            inputError.clear();
+            screen = Screen::NewEnterName;
+            return;
+        }
+    }
+
+    if (const auto* text = event.getIf<sf::Event::TextEntered>())
+    {
+        const char32_t unicode = text->unicode;
+        if (unicode >= 32 && unicode != 127 && inputId.getSize() < 24)
+            inputId += sf::String(unicode);
+    }
+}
+
+void Menu::handleLoadEvent(sf::RenderWindow& window, const sf::Event& event, CGAME& state)
+{
+    if (const auto* key = event.getIf<sf::Event::KeyPressed>())
+    {
+        if (key->code == sf::Keyboard::Key::Escape)
+        {
+            screen = Screen::Main;
+            return;
+        }
+    }
+
+    if (const auto* mouse = event.getIf<sf::Event::MouseButtonPressed>())
+    {
+        if (mouse->button != sf::Mouse::Button::Left) return;
+        const sf::Vector2f pos = window.mapPixelToCoords(mouse->position);
+        const sf::FloatRect loadBackRect = { { 515.f, 600.f }, { 250.f, 50.f } };
+
+        if (loadBackRect.contains(pos))
+        {
+            screen = Screen::Main;
+            return;
+        }
+
+        // DELETE has priority over the larger slot card hitbox.
+        for (int i = 0; i < 10; ++i)
+        {
+            if (slotUsed[i] && slotDeleteRects[i].contains(pos))
+            {
+                std::error_code ec;
+                std::filesystem::remove(getSlotPath(i), ec);
+                if (!ec)
+                {
+                    if (requestedSlot == i)
+                    {
+                        requestedSlot = -1;
+                        requestedSave = SaveData{};
+                    }
+                    refreshSlots();
+                    inputError = "Save slot deleted.";
+                }
+                else inputError = "Cannot delete this slot.";
+                return;
+            }
+        }
+
+        for (int i = 0; i < 10; ++i)
+        {
+            if (!slotRects[i].contains(pos)) continue;
+            if (!slotUsed[i]) return;
+
+            requestedSave = slotData[i];
+            requestedSlot = i;
+            startGame = false;
+            loadGame = false;
+
+            if (requestedSave.gameMode == 1)
+            {
+                // Classic loading opens Level Select; choosing a level starts it fresh.
+                screen = Screen::ClassicLevelSelect;
+                state = CGAME::Menu;
+            }
+            else
+            {
+                loadGame = true;
+                screen = Screen::Main;
+                state = CGAME::Playing;
+            }
+            return;
+        }
+    }
+}
+
+void Menu::handleClassicLevelSelectEvent(sf::RenderWindow& window, const sf::Event& event, CGAME& state)
+{
+    if (const auto* key = event.getIf<sf::Event::KeyPressed>())
+    {
+        if (key->code == sf::Keyboard::Key::Escape || key->code == sf::Keyboard::Key::Backspace)
+        {
+            screen = Screen::Main;
+            return;
+        }
+    }
+
+    if (const auto* mouse = event.getIf<sf::Event::MouseButtonPressed>())
+    {
+        if (mouse->button != sf::Mouse::Button::Left) return;
+        const sf::Vector2f pos = window.mapPixelToCoords(mouse->position);
+        const sf::FloatRect levelBack = { { 515.f, 560.f }, { 250.f, 48.f } };
+        if (levelBack.contains(pos))
+        {
+            screen = Screen::Main;
+            return;
+        }
+
+        const int unlocked = std::clamp(requestedSave.unlockedClassicLevel, 1, 10);
+        for (int i = 0; i < 10; ++i)
+        {
+            if (!classicLevelRects[i].contains(pos)) continue;
+            const int chosenLevel = i + 1;
+            if (chosenLevel > unlocked) return;
+
+            // Starting/replaying a Classic level is ALWAYS a fresh run.
+            requestedSave.currentStage = chosenLevel;
+            requestedSave.classicStage = 1;
+            requestedSave.level = chosenLevel;
+            requestedSave.score = 0;
+            requestedSave.lives = 1;
+            requestedSave.playerX = 615.f;
+            requestedSave.playerY = 610.f;
+            requestedSave.checkpointX = 615.f;
+            requestedSave.checkpointY = 610.f;
+            requestedSave.worldSeed = 0;
+            requestedSave.cameraY = 360.f;
+            requestedSave.bestPlayerY = 610.f;
+            requestedSave.nextLaneY = 510.f;
+            requestedSave.difficultyTier = 0;
+            requestedSave.endlessLaneSequenceIndex = 0;
+            requestedSave.classicLaneSequenceIndex = 0;
+            requestedSave.lanes.clear();
+            requestedSave.hasTrain = false;
+            requestedSave.trainY = 0.f;
+
+            if (requestedSlot >= 0)
+                CSAVEGAME::Save(requestedSave, getSlotPath(requestedSlot));
+
+            startGame = true;
+            loadGame = false;
+            screen = Screen::Main;
+            state = CGAME::Playing;
+            return;
+        }
+    }
+}
+
+void Menu::handleLeaderboardEvent(sf::RenderWindow& window, const sf::Event& event)
+{
+    if (const auto* key = event.getIf<sf::Event::KeyPressed>())
+    {
+        if (key->code == sf::Keyboard::Key::Escape || key->code == sf::Keyboard::Key::Backspace)
+        {
+            screen = Screen::Main;
+            return;
+        }
+    }
+
+    if (const auto* mouse = event.getIf<sf::Event::MouseButtonPressed>())
+    {
+        if (mouse->button != sf::Mouse::Button::Left) return;
+        const sf::Vector2f pos = window.mapPixelToCoords(mouse->position);
+        const sf::FloatRect leaderboardBack = { { 500.f, 625.f }, { 280.f, 50.f } };
+        if (leaderboardBack.contains(pos)) screen = Screen::Main;
+    }
+}
+
+void Menu::handleEvent(sf::RenderWindow& window, const sf::Event& event, CGAME& state)
+{
+    if (state != CGAME::Menu)
+        return;
+
+    switch (screen)
+    {
+    case Screen::Main:
+        handleMainEvent(window, event);
+        break;
+    case Screen::NewChooseMode:
+        handleNewChooseModeEvent(window, event);
+        break;
+    case Screen::NewEnterName:
+        // Mouse NEXT/BACK handling kept explicit so it cannot collide with Load slots.
+        if (const auto* mouse = event.getIf<sf::Event::MouseButtonPressed>())
+        {
+            if (mouse->button == sf::Mouse::Button::Left)
+            {
+                const sf::Vector2f pos = window.mapPixelToCoords(mouse->position);
+                if (startRect.contains(pos))
+                {
+                    if (inputName.isEmpty())
+                        inputError = "Name cannot be empty.";
+                    else
+                    {
+                        inputError.clear();
+                        screen = Screen::NewEnterId;
+                    }
+                    return;
+                }
+                if (backRect.contains(pos))
+                {
+                    inputError.clear();
+                    screen = Screen::NewChooseMode;
+                    return;
+                }
+            }
+        }
+        handleNewEnterNameEvent(event);
+        break;
+    case Screen::NewEnterId:
+        handleNewEnterIdEvent(window, event, state);
+        break;
+    case Screen::Load:
+        handleLoadEvent(window, event, state);
+        break;
+    case Screen::ClassicLevelSelect:
+        handleClassicLevelSelectEvent(window, event, state);
+        break;
+    case Screen::Leaderboard:
+        handleLeaderboardEvent(window, event);
+        break;
+    }
+}
+
+void Menu::showClassicLevelSelect(const SaveData& save, int slotIndex)
+{
+    requestedSave = save;
+    requestedSlot = slotIndex;
+    startGame = false;
+    loadGame = false;
+    inputError.clear();
+    screen = Screen::ClassicLevelSelect;
+}
+
+bool Menu::isStartGame() const
+{
+    return startGame;
+}
+
+void Menu::resetStartFlag()
+{
+    startGame = false;
+}
+
+bool Menu::isLoadGame() const
+{
+    return loadGame;
+}
+
+void Menu::resetLoadFlag()
+{
+    loadGame = false;
+}
+
+const SaveData& Menu::getRequestedSave() const
+{
+    return requestedSave;
+}
+
+int Menu::getRequestedSlot() const
+{
+    return requestedSlot;
+}

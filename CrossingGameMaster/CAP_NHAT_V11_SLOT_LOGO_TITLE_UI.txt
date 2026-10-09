@@ -1,0 +1,14 @@
+CAP NHAT V11
+
+1. HUD
+- Thong bao SKIN duoc can giua giong WELCOME.
+
+2. LOAD GAME / LEVEL SELECT
+- LOAD GAME va subtitle day len tren.
+- CLASSIC - LEVEL SELECT va subtitle day len tren.
+- Load slot dung Slot.png, day xuong duoi, text tach ro hon.
+- Khung Level Select tro ve kich thuoc 10/10 (1070 x 590).
+
+3. MAIN MENU
+- CROSSING GAME text duoc thay bang CrossingGame.png.
+- Khung menu + 4 nut + dong huong dan duoc day xuong de chua logo.

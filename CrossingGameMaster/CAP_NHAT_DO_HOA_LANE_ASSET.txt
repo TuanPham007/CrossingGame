@@ -1,0 +1,35 @@
+CAP NHAT DO HOA LANE - 2026-08-15
+
+1) AssetManager.h / AssetManager.cpp
+- Them VineLane.png, CloudLane.png, River.png, Log.png vao AssetManager Singleton.
+
+2) main.cpp
+- drawSimpleLaneMap() khong con ve RectangleShape mau xanh/xam.
+- Safe lane -> VineLane.png.
+- Hazard/Obstacle lane -> CloudLane.png.
+- Nen trong gameplay dung mau troi nhat de phan trong suot cua PNG hien dung.
+- Cac safe strip o giua cum river cung dung VineLane.png.
+- Logic toa do, spawn, collision, safe lane va camera khong thay doi.
+
+3) CWaterLane.cpp
+- River duoc render bang River.png.
+- Log duoc render bang Log.png.
+- RectangleShape log cu van duoc giu lam collision platform, nen hitbox/save-load khong bi pha.
+- WaterHeight = 50 px van la vung nuoc gay chet; River.png chi thay doi hinh anh.
+
+4) Menu.h / Menu.cpp
+- Them MenuBackground.png.
+- MenuBackground duoc scale ve 1280x720.
+- Co mot lop veil toi nhe de chu va nut van de doc.
+- Neu anh khong load duoc, menu tu dong quay ve nen mau cu.
+
+5) Asset trong thu muc project
+- VineLane.png
+- CloudLane.png
+- River.png
+- Log.png
+- MenuBackground.png
+
+GHI CHU
+- 4 asset co alpha da duoc crop phan trong suot du thua truoc khi dua vao project, giup scale dung lane va khong lam hinh bi nho trong mot canvas 2048x1152.
+- Khong can sua LevelConfig, collision hay SaveData khi thay cac asset nay.

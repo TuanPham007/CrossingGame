@@ -1,0 +1,36 @@
+CAP NHAT GAMEPLAY + DO HOA
+
+1. Infinite exit safe lane
+- main.cpp: saveSlotForExit()
+- Khi thoat Infinite qua Pause -> Main Menu hoac dong cua so game, vi tri duoc luu se snap ve safe lane gan nhat nam phia sau/ben duoi vi tri cuoi.
+- bestPlayerY khong bi reset, tranh farm lai diem sau khi load.
+
+2. Playing background
+- Asset: PlayingBackground.png
+- AssetManager load texture.
+- main.cpp: drawPlayingBackground() ve 1 anh sky co dinh theo camera truoc khi ve lane.
+
+3. CTRAIN
+- Files moi: CTRAIN.h / CTRAIN.cpp
+- Train1.png = locomotive
+- Train2.png = carriage
+- TrainLane.png = rail lane
+- Moi train: 1 locomotive + random 2..5 carriages.
+- Toa overlap 12 px tai khop noi de giam lo seam.
+- Classic Level 10 dung train lane theo LevelConfig.
+- Infinite bat dau co train tu Difficulty 12, sau do co the xuat hien lai khi train lane cu da ra khoi camera.
+
+4. Train warning light
+- Moi train lane co 1 signal rieng.
+- Green: idle / train chua den.
+- Yellow blink: train sap den.
+- Red: train dang chay qua.
+
+5. Safe lane variants
+- VineLane4.png va VineLane5.png duoc luan phien theo safe-lane index.
+- River safe strips cung dung cung co che luan phien.
+
+6. Project files
+- AssetManager.h/cpp da bo sung PlayingBackground/VineLane5/TrainLane/Train1/Train2.
+- CrossingGameMaster.vcxproj va .filters da them CTRAIN.cpp/h.
+- CTrainHazard cu duoc go bo khoi project de tranh nham lan.
